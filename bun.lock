@@ -1,0 +1,20 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "ptt-fleet",
+    },
+    "apps/dispatcher-web": {
+      "name": "dispatcher-web",
+    },
+    "packages/shared-types": {
+      "name": "@ptt-fleet/shared-types",
+      "version": "0.0.0",
+    },
+  },
+  "packages": {
+    "@ptt-fleet/shared-types": ["@ptt-fleet/shared-types@workspace:packages/shared-types"],
+
+    "dispatcher-web": ["dispatcher-web@workspace:apps/dispatcher-web"],
+  }
+}

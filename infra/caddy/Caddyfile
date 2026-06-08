@@ -1,0 +1,7 @@
+ptt.example.com {
+  reverse_proxy dispatcher-web:80
+}
+
+api.ptt.example.com {
+  reverse_proxy api-server:8080
+}

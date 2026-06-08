@@ -1,0 +1,12 @@
+{
+  "name": "@ptt-fleet/shared-types",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "echo \"shared-types typecheck will be added when TypeScript config is introduced\""
+  }
+}

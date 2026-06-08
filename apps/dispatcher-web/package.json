@@ -1,0 +1,10 @@
+{
+  "name": "dispatcher-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo \"dispatcher-web will be scaffolded in the dispatcher phase\"",
+    "build": "echo \"dispatcher-web build will be added after Vite setup\"",
+    "lint": "echo \"dispatcher-web lint will be added after Vite setup\""
+  }
+}
