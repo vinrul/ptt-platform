@@ -35,4 +35,15 @@
     <string name="sos_sent">SOS alert sent to dispatcher.</string>
     <string name="sos_not_sent">Unable to send SOS while realtime is offline.</string>
     <string name="cancel">Cancel</string>
+    <string name="hold_to_talk">Hold to talk</string>
+    <string name="channel_joining">Joining channel…</string>
+    <string name="channel_not_ready">Select and join a channel first.</string>
+    <string name="no_groups">No assigned PTT groups.</string>
+    <string name="ptt_ready">Channel ready · hold the button to talk.</string>
+    <string name="ptt_requesting">Requesting channel…</string>
+    <string name="ptt_transmitting">Transmitting voice…</string>
+    <string name="ptt_receiving">Receiving voice…</string>
+    <string name="ptt_busy">Channel busy · another user is talking.</string>
+    <string name="ptt_hold_again">Microphone ready · hold PTT again.</string>
+    <string name="audio_permission_denied">Microphone permission was denied.</string>
 </resources>

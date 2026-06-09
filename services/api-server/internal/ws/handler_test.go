@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,12 +15,14 @@ import (
 
 	"ptt-fleet/services/api-server/internal/auth"
 	"ptt-fleet/services/api-server/internal/gps"
+	"ptt-fleet/services/api-server/internal/ptt"
 	"ptt-fleet/services/api-server/internal/sos"
 )
 
 type fakeAccessRepository struct {
-	identity Identity
-	joinErr  error
+	identity   Identity
+	identities map[string]Identity
+	joinErr    error
 }
 
 type fakeGPSRecorder struct {
@@ -28,6 +31,21 @@ type fakeGPSRecorder struct {
 }
 
 type fakeSOSService struct{}
+
+type fakePTTRepository struct{}
+
+func (fakePTTRepository) CreateSession(_ context.Context, groupID string, speakerUserID string) (ptt.Session, error) {
+	return ptt.Session{
+		ID:            "11111111-1111-4111-8111-111111111111",
+		GroupID:       groupID,
+		SpeakerUserID: speakerUserID,
+		StartedAt:     time.Now(),
+	}, nil
+}
+
+func (fakePTTRepository) StopSession(_ context.Context, _ string, _ string, _ time.Time) error {
+	return nil
+}
 
 func (fakeSOSService) Create(_ context.Context, userID string, input sos.CreateInput) (sos.Event, error) {
 	return sos.Event{
@@ -60,10 +78,85 @@ func (r fakeGPSRecorder) Record(_ context.Context, userID string, update gps.Upd
 }
 
 func (r fakeAccessRepository) ActiveIdentity(_ context.Context, userID string) (Identity, error) {
+	if identity, exists := r.identities[userID]; exists {
+		return identity, nil
+	}
 	if r.identity.UserID != userID {
 		return Identity{}, ErrUserNotFound
 	}
 	return r.identity, nil
+}
+
+func TestHandlerRelaysPTTAudioWithinJoinedGroup(t *testing.T) {
+	server, manager, hub := newWebSocketTestServer(t, fakeAccessRepository{
+		identities: map[string]Identity{
+			"user-1": {UserID: "user-1", Username: "field1", Role: "field_user"},
+			"user-2": {UserID: "user-2", Username: "field2", Role: "field_user"},
+		},
+	})
+	defer server.Close()
+	defer hub.CloseAll()
+
+	speaker := dialTestConnection(t, server.URL, manager, "user-1", "field1", "field_user")
+	defer speaker.Close()
+	listener := dialTestConnection(t, server.URL, manager, "user-2", "field2", "field_user")
+	defer listener.Close()
+	_ = readEvent(t, speaker)
+	_ = readEvent(t, listener)
+
+	for _, connection := range []*websocket.Conn{speaker, listener} {
+		if err := connection.WriteJSON(NewEvent("group.join", "", map[string]any{"groupId": "group-1"})); err != nil {
+			t.Fatalf("write group.join: %v", err)
+		}
+		if event := readEvent(t, connection); event.Type != "group.joined" {
+			t.Fatalf("expected group.joined, got %s", event.Type)
+		}
+	}
+
+	if err := speaker.WriteJSON(NewEvent("ptt.start", "req-start", map[string]any{"groupId": "group-1"})); err != nil {
+		t.Fatalf("write ptt.start: %v", err)
+	}
+	granted := readEvent(t, speaker)
+	if granted.Type != "ptt.granted" {
+		t.Fatalf("expected ptt.granted, got %s", granted.Type)
+	}
+	startedSpeaker := readEvent(t, speaker)
+	if startedSpeaker.Type != "ptt.started" {
+		t.Fatalf("expected ptt.started for speaker, got %s", startedSpeaker.Type)
+	}
+	startedListener := readEvent(t, listener)
+	if startedListener.Type != "ptt.started" {
+		t.Fatalf("expected ptt.started for listener, got %s", startedListener.Type)
+	}
+
+	frame := make([]byte, 28)
+	frame[0] = 0x01
+	copy(frame[1:17], []byte{
+		0x11, 0x11, 0x11, 0x11,
+		0x11, 0x11,
+		0x41, 0x11,
+		0x81, 0x11,
+		0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+	})
+	binary.BigEndian.PutUint64(frame[17:25], 1)
+	copy(frame[25:], []byte{0x01, 0x02, 0x03})
+	if err := speaker.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+		t.Fatalf("write audio frame: %v", err)
+	}
+
+	if err := listener.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set listener deadline: %v", err)
+	}
+	messageType, downlink, err := listener.ReadMessage()
+	if err != nil {
+		t.Fatalf("read downlink: %v", err)
+	}
+	if messageType != websocket.BinaryMessage || downlink[0] != 0x02 {
+		t.Fatalf("expected binary downlink, type=%d frame=%x", messageType, downlink)
+	}
+	if binary.BigEndian.Uint64(downlink[17:25]) != 1 {
+		t.Fatalf("expected sequence 1, got %d", binary.BigEndian.Uint64(downlink[17:25]))
+	}
 }
 
 func (r fakeAccessRepository) CanJoinGroup(_ context.Context, _ string, _ string) error {
@@ -222,7 +315,7 @@ func newWebSocketTestServer(t *testing.T, repository AccessRepository) (*httptes
 	hub := NewHub()
 	handler := NewHandler(manager, repository, fakeGPSRecorder{
 		location: gps.Location{RecordedAt: time.Now().UTC().Format(time.RFC3339)},
-	}, fakeSOSService{}, hub)
+	}, fakeSOSService{}, ptt.NewManager(fakePTTRepository{}), hub)
 	router := gin.New()
 	router.GET("/ws", handler.Connect)
 

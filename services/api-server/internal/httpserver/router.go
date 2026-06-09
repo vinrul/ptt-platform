@@ -6,11 +6,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ptt-fleet/services/api-server/internal/audit"
 	"ptt-fleet/services/api-server/internal/auth"
 	"ptt-fleet/services/api-server/internal/config"
 	"ptt-fleet/services/api-server/internal/db"
+	"ptt-fleet/services/api-server/internal/devices"
 	"ptt-fleet/services/api-server/internal/gps"
 	"ptt-fleet/services/api-server/internal/groups"
+	"ptt-fleet/services/api-server/internal/ptt"
 	"ptt-fleet/services/api-server/internal/sos"
 	"ptt-fleet/services/api-server/internal/users"
 	realtime "ptt-fleet/services/api-server/internal/ws"
@@ -62,11 +65,14 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	authHandler := auth.NewHandler(authService)
 	userHandler := users.NewHandler(users.NewService(store))
 	groupHandler := groups.NewHandler(groups.NewService(store))
+	deviceHandler := devices.NewHandler(devices.NewService(store))
+	auditHandler := audit.NewHandler(audit.NewService(store))
 	websocketHandler := realtime.NewHandler(
 		tokenManager,
 		realtime.NewRepository(store),
 		gps.NewService(store),
 		sos.NewService(store),
+		ptt.NewManager(ptt.NewRepository(store)),
 		hub,
 	)
 
@@ -94,6 +100,9 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	protected.DELETE("/groups/:id", groupHandler.Delete)
 	protected.POST("/groups/:id/members", groupHandler.AddMember)
 	protected.DELETE("/groups/:id/members/:userId", groupHandler.RemoveMember)
+	protected.GET("/devices", deviceHandler.List)
+	protected.GET("/devices/:id", deviceHandler.Get)
+	protected.GET("/audit-logs", auditHandler.List)
 
 	return router
 }

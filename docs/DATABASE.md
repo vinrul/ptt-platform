@@ -65,6 +65,8 @@ Indexes:
 - `(user_id)`
 - `(last_seen_at DESC)`
 
+Device dibuat pada login berhasil. Refresh token memperbarui `last_seen_at`.
+
 ## groups
 
 Menyimpan channel/grup PTT.
@@ -233,6 +235,9 @@ Initial actions:
 - `sos.acked`
 - `ptt.started`
 - `ptt.stopped`
+
+Create/stop talk session menulis `talk_sessions` dan audit log dalam transaksi
+yang sama.
 
 ## Seed Data
 

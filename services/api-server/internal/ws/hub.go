@@ -103,6 +103,36 @@ func (h *Hub) BroadcastToOperators(event OutboundEvent) {
 	}
 }
 
+func (h *Hub) BroadcastToGroup(groupID string, event OutboundEvent) {
+	h.mu.RLock()
+	recipients := make([]*Connection, 0)
+	for _, connection := range h.connections {
+		if connection.HasJoinedGroup(groupID) {
+			recipients = append(recipients, connection)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, connection := range recipients {
+		connection.Send(event)
+	}
+}
+
+func (h *Hub) BroadcastBinaryToGroup(groupID string, senderConnectionID string, data []byte) {
+	h.mu.RLock()
+	recipients := make([]*Connection, 0)
+	for _, connection := range h.connections {
+		if connection.ID != senderConnectionID && connection.HasJoinedGroup(groupID) {
+			recipients = append(recipients, connection)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, connection := range recipients {
+		connection.SendBinary(data)
+	}
+}
+
 func (h *Hub) broadcastPresence(userID string, status string) {
 	event := NewEvent("presence.updated", "", map[string]any{
 		"userId":     userID,

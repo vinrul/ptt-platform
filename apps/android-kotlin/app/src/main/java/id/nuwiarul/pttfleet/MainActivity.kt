@@ -3,7 +3,9 @@ package id.nuwiarul.pttfleet
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.MotionEvent
 import android.view.View
+import android.widget.ArrayAdapter
 import androidx.appcompat.app.AlertDialog
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -12,7 +14,10 @@ import androidx.lifecycle.lifecycleScope
 import id.nuwiarul.pttfleet.auth.AuthRepository
 import id.nuwiarul.pttfleet.auth.AuthSession
 import id.nuwiarul.pttfleet.auth.SecureTokenStore
+import id.nuwiarul.pttfleet.audio.PttAudioEngine
 import id.nuwiarul.pttfleet.databinding.ActivityMainBinding
+import id.nuwiarul.pttfleet.groups.GroupRepository
+import id.nuwiarul.pttfleet.groups.GroupSummary
 import id.nuwiarul.pttfleet.location.GpsSample
 import id.nuwiarul.pttfleet.location.LocationTracker
 import id.nuwiarul.pttfleet.websocket.ConnectionStatus
@@ -31,9 +36,16 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         .pingInterval(30, TimeUnit.SECONDS)
         .build()
     private val authRepository = AuthRepository(httpClient)
+    private val groupRepository = GroupRepository(httpClient)
     private var realtimeClient: RealtimeClient? = null
+    private lateinit var audioEngine: PttAudioEngine
     private lateinit var locationTracker: LocationTracker
     private var latestLocation: GpsSample? = null
+    private var groups: List<GroupSummary> = emptyList()
+    private var joinedGroupId: String? = null
+    private var activePttSessionId: String? = null
+    private var audioSequence = 0L
+    private var pttHeld = false
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { permissions ->
@@ -44,6 +56,13 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         } else {
             binding.locationStatusText.setText(R.string.location_permission_denied)
         }
+    }
+    private val audioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        binding.pttStatusText.setText(
+            if (granted) R.string.ptt_hold_again else R.string.audio_permission_denied,
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,15 +75,46 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             applicationContext,
             ::handleLocation,
         ) { message -> binding.locationStatusText.text = message }
+        audioEngine = PttAudioEngine(
+            onEncodedFrame = { payload ->
+                activePttSessionId?.let { sessionId ->
+                    realtimeClient?.sendAudio(sessionId, audioSequence++, payload)
+                }
+            },
+            onError = { message -> runOnUiThread { binding.pttStatusText.text = message } },
+        )
         binding.loginButton.setOnClickListener { login() }
         binding.logoutButton.setOnClickListener { logout() }
         binding.locationToggleButton.setOnClickListener { toggleTracking() }
         binding.sosButton.setOnClickListener { confirmSos() }
+        binding.groupSpinner.onItemSelectedListener = GroupSelectionListener { position ->
+            groups.getOrNull(position)?.let { group ->
+                joinedGroupId = null
+                binding.pttButton.isEnabled = false
+                realtimeClient?.joinGroup(group.id)
+            }
+        }
+        binding.pttButton.setOnTouchListener { _, motionEvent ->
+            when (motionEvent.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pttHeld = true
+                    requestPttStart()
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    pttHeld = false
+                    stopPtt()
+                    true
+                }
+                else -> false
+            }
+        }
 
         tokenStore.load()?.let { showSession(it) } ?: showLogin()
     }
 
     override fun onDestroy() {
+        audioEngine.release()
         locationTracker.stop()
         realtimeClient?.disconnect()
         realtimeClient = null
@@ -110,6 +160,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
 
         realtimeClient?.disconnect()
         realtimeClient = RealtimeClient(httpClient, this).also { it.connect(session) }
+        loadGroups(session)
     }
 
     private fun showLogin() {
@@ -117,15 +168,61 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         binding.loginPanel.visibility = View.VISIBLE
         binding.sessionPanel.visibility = View.GONE
         binding.loginError.visibility = View.GONE
+        groups = emptyList()
+        joinedGroupId = null
+        binding.pttButton.isEnabled = false
     }
 
     private fun logout() {
+        stopPtt()
         stopTracking()
         realtimeClient?.disconnect()
         realtimeClient = null
         tokenStore.clear()
         binding.passwordInput.text?.clear()
         showLogin()
+    }
+
+    private fun loadGroups(session: AuthSession) {
+        lifecycleScope.launch {
+            runCatching { groupRepository.list(session) }
+                .onSuccess { items ->
+                    groups = items
+                    binding.groupSpinner.adapter = ArrayAdapter(
+                        this@MainActivity,
+                        android.R.layout.simple_spinner_dropdown_item,
+                        items.map { it.name },
+                    )
+                    binding.pttStatusText.setText(
+                        if (items.isEmpty()) R.string.no_groups else R.string.channel_joining,
+                    )
+                }
+                .onFailure { binding.pttStatusText.text = it.message }
+        }
+    }
+
+    private fun requestPttStart() {
+        val groupId = joinedGroupId
+        if (groupId == null) {
+            binding.pttStatusText.setText(R.string.channel_not_ready)
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            pttHeld = false
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        binding.pttStatusText.setText(R.string.ptt_requesting)
+        realtimeClient?.startPtt(groupId)
+    }
+
+    private fun stopPtt() {
+        audioEngine.stopCapture()
+        activePttSessionId?.let { realtimeClient?.stopPtt(it) }
+        activePttSessionId = null
+        audioSequence = 0
     }
 
     private fun toggleTracking() {
@@ -213,13 +310,76 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                 ConnectionStatus.RECONNECTING -> R.string.connection_reconnecting
             },
         )
+        if (status != ConnectionStatus.CONNECTED) {
+            stopPtt()
+            joinedGroupId = null
+            binding.pttButton.isEnabled = false
+        }
     }
 
     override fun onReady(connectionId: String) {
         binding.connectionDetailText.text = getString(R.string.realtime_ready, connectionId.take(8))
+        groups.firstOrNull()?.let { realtimeClient?.joinGroup(it.id) }
     }
 
     override fun onError(message: String) {
         binding.connectionDetailText.text = message
     }
+
+    override fun onGroupJoined(groupId: String) {
+        joinedGroupId = groupId
+        binding.pttButton.isEnabled = true
+        binding.pttStatusText.setText(R.string.ptt_ready)
+    }
+
+    override fun onPttGranted(sessionId: String, groupId: String) {
+        if (!pttHeld || joinedGroupId != groupId) {
+            realtimeClient?.stopPtt(sessionId)
+            return
+        }
+        activePttSessionId = sessionId
+        audioSequence = 0
+        binding.pttStatusText.setText(R.string.ptt_transmitting)
+        audioEngine.startCapture()
+    }
+
+    override fun onPttBusy(groupId: String, speakerUserId: String) {
+        activePttSessionId = null
+        binding.pttStatusText.setText(R.string.ptt_busy)
+    }
+
+    override fun onPttStarted(sessionId: String, groupId: String, speakerUserId: String) {
+        if (sessionId != activePttSessionId) {
+            binding.pttStatusText.setText(R.string.ptt_receiving)
+        }
+    }
+
+    override fun onPttStopped(sessionId: String, groupId: String, reason: String) {
+        if (sessionId == activePttSessionId) {
+            audioEngine.stopCapture()
+            activePttSessionId = null
+        }
+        binding.pttStatusText.setText(R.string.ptt_ready)
+    }
+
+    override fun onAudioFrame(sessionId: String, sequence: Long, payload: ByteArray) {
+        if (sessionId != activePttSessionId) {
+            audioEngine.play(payload)
+        }
+    }
+}
+
+private class GroupSelectionListener(
+    private val onSelected: (Int) -> Unit,
+) : android.widget.AdapterView.OnItemSelectedListener {
+    override fun onItemSelected(
+        parent: android.widget.AdapterView<*>?,
+        view: View?,
+        position: Int,
+        id: Long,
+    ) {
+        onSelected(position)
+    }
+
+    override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
 }

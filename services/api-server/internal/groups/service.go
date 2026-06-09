@@ -73,6 +73,33 @@ func (s *Service) List(ctx context.Context) ([]Group, error) {
 	return items, rows.Err()
 }
 
+func (s *Service) ListForUser(ctx context.Context, userID string) ([]Group, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	rows, err := s.store.Postgres.Query(ctx, `
+		SELECT g.id, g.name, g.description, g.created_at, g.updated_at
+		FROM groups g
+		JOIN group_members gm ON gm.group_id = g.id
+		WHERE gm.user_id = $1
+		ORDER BY g.name
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]Group, 0)
+	for rows.Next() {
+		var group Group
+		if err := rows.Scan(&group.ID, &group.Name, &group.Description, &group.CreatedAt, &group.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, group)
+	}
+	return items, rows.Err()
+}
+
 func (s *Service) Create(ctx context.Context, actorID string, name string, description string) (Group, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
