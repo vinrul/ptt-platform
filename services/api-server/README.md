@@ -40,6 +40,16 @@ Run API:
 go run ./cmd/server
 ```
 
+Seed user dan grup lokal:
+
+```bash
+go run ./cmd/seed
+```
+
+Seed bersifat idempotent, hanya diizinkan untuk `APP_ENV=local`, dan membuat
+user `admin`, `dispatcher`, `field1`, serta `field2`. Password default adalah
+`ptt-local-123` dan dapat dioverride melalui `SEED_PASSWORD`.
+
 Run test:
 
 ```bash
@@ -53,8 +63,7 @@ Test package WebSocket membuka listener localhost sementara melalui
 
 1. Jalankan PostgreSQL dan Redis.
 2. Jalankan migration.
-3. Siapkan user dengan password bcrypt di tabel `users`; seed resmi ditambahkan
-   pada Phase 13 Local Testing.
+3. Jalankan `go run ./cmd/seed` untuk membuat user dan grup local.
 4. Login melalui `POST /api/auth/login`.
 5. Pakai `Authorization: Bearer <access_token>` untuk endpoint protected.
 6. Pastikan refresh merotasi token dan logout membuat refresh token tidak bisa

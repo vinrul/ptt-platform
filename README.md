@@ -25,21 +25,23 @@ lapangan, GPS tracking realtime, SOS event, dan dispatcher web berbasis peta.
 - `docs/STRUCTURE.md` - struktur repo.
 - `docs/ROADMAP.md` - milestone.
 - `docs/DEPLOYMENT.md` - deployment dan backup.
+- `docs/LOCAL_TESTING.md` - one-command stack, seed, dan smoke test.
 
 ## Perintah Local Target
 
 ```bash
-cp .env.example .env
 bun install
-bun run docker:local
-bun run migrate:up
-bun run docker:api
-bun run dev:api
-bun run dev:web
+bun run local
 ```
 
-Dispatcher development tersedia di `http://localhost:5173`. Vite mem-proxy
-request `/api` dan `/ws` ke backend local port `8080`.
+Perintah tersebut memilih Docker atau Podman, menjalankan dependency, migration,
+seed lokal, API, dispatcher, lalu smoke test. Dispatcher tersedia di
+`http://localhost:5173`; Pgweb tersedia di `http://localhost:8081` dan langsung
+terhubung ke PostgreSQL.
+
+User local tersedia sebagai `admin`, `dispatcher`, `field1`, dan `field2` dengan
+password default `ptt-local-123`. Detail dan command terpisah tersedia di
+`docs/LOCAL_TESTING.md`.
 
 Android project berada di `apps/android-kotlin`. Emulator memakai server URL
 `http://10.0.2.2:8080`; perangkat fisik memakai IP LAN mesin development.
@@ -50,20 +52,17 @@ Untuk menjalankan emulator, install debug APK, dan membuka app sekaligus:
 bun run android:run
 ```
 
-Development memakai Docker Compose sejak awal. Pada fase pertama, Compose local
-menjalankan PostgreSQL, Redis, dan Pgweb. Pgweb tersedia di
-`http://localhost:8081` dan langsung terhubung ke database PostgreSQL dari
-Compose tanpa setup koneksi manual. Backend API bisa dijalankan lewat
-`bun run docker:api` setelah Dockerfile backend tersedia. Setelah Dockerfile
-semua aplikasi tersedia, `bun run docker:local:app` bisa menjalankan stack penuh
-lewat Docker.
+Development memakai Docker Compose sejak awal untuk PostgreSQL, Redis, dan
+Pgweb. Backend API bisa dijalankan lewat `bun run docker:api`. Stack aplikasi
+penuh dalam container tersedia melalui `bun run docker:local:app`.
 
 Untuk `bun run dev:api` dari host, backend memakai default local:
 
 - `DATABASE_URL=postgres://ptt:ptt@localhost:5432/ptt_fleet?sslmode=disable`
 - `REDIS_URL=redis://localhost:6379`
 
-Jalankan `bun run docker:local` dulu agar PostgreSQL dan Redis tersedia.
+Untuk alur manual, jalankan `bun run docker:local` dulu agar PostgreSQL dan Redis
+tersedia.
 
 Repo saat ini dirancang agar dibangun bertahap dari backend foundation, realtime
 presence, GPS, SOS, lalu PTT audio Android-to-Android.

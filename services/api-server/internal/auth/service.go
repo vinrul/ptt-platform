@@ -101,8 +101,8 @@ func (s *Service) Login(ctx context.Context, username string, password string, d
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id)
-		VALUES ($1, 'auth.login_success', 'user', $1)
-	`, user.ID); err != nil {
+		VALUES ($1, 'auth.login_success', 'user', $2)
+	`, user.ID, user.ID); err != nil {
 		return Session{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -209,8 +209,8 @@ func (s *Service) Logout(ctx context.Context, userID string, refreshToken string
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id)
-		VALUES ($1, 'auth.logout', 'user', $1)
-	`, userID); err != nil {
+		VALUES ($1, 'auth.logout', 'user', $2)
+	`, userID, userID); err != nil {
 		return err
 	}
 

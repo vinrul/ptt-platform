@@ -27,11 +27,14 @@ Service local minimal:
 Command target:
 
 ```bash
-cp .env.example .env
-docker compose -f infra/docker/docker-compose.local.yml --env-file .env up -d --remove-orphans postgres redis pgweb
+bun run local
 ```
 
-Atau via Bun script:
+Command ini mendeteksi Docker atau Podman, menjalankan dependency, migration,
+seed, API, dispatcher web, dan smoke test. Panduan lengkap tersedia di
+`docs/LOCAL_TESTING.md`.
+
+Menjalankan dependency saja:
 
 ```bash
 bun run docker:local
@@ -44,13 +47,20 @@ bun run migrate:up
 bun run migrate:status
 ```
 
-Setelah Dockerfile backend tersedia:
+Menjalankan seed dan smoke test secara terpisah:
+
+```bash
+bun run seed:local
+bun run smoke:local
+```
+
+Menjalankan backend dalam container:
 
 ```bash
 bun run docker:api
 ```
 
-Setelah Dockerfile aplikasi tersedia:
+Menjalankan seluruh aplikasi dalam container:
 
 ```bash
 bun run docker:local:app
