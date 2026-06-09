@@ -4,6 +4,8 @@ import type {
   PresenceStatus,
   PresenceUpdatedEvent,
   ServerRealtimeEvent,
+  SosAckedEvent,
+  SosCreatedEvent,
   UserSummary,
 } from "@ptt-fleet/shared-types";
 import { create } from "zustand";
@@ -23,12 +25,26 @@ export interface UserLocation {
   recordedAt: string;
 }
 
+export interface SosAlert {
+  id: string;
+  userId: string;
+  lat?: number;
+  lng?: number;
+  message: string;
+  status: "open" | "ack";
+  createdAt: string;
+  acknowledgedBy?: string;
+  acknowledgedAt?: string;
+}
+
 interface RealtimeState {
   connectionId: string | null;
   connectionStatus: RealtimeStatus;
   users: UserSummary[];
   presence: Record<string, PresenceEntry>;
   locations: Record<string, UserLocation>;
+  sosAlerts: Record<string, SosAlert>;
+  focusedSosId: string | null;
   setConnectionStatus: (status: RealtimeStatus) => void;
   setUsers: (users: UserSummary[]) => void;
   applyEvent: (event: ServerRealtimeEvent) => void;
@@ -41,6 +57,8 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   users: [],
   presence: {},
   locations: {},
+  sosAlerts: {},
+  focusedSosId: null,
   setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
   setUsers: (users) => set({ users }),
   applyEvent: (event) => {
@@ -76,6 +94,39 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
           },
         },
       }));
+      return;
+    }
+    if (event.type === "sos.created") {
+      const sosEvent = event as SosCreatedEvent;
+      set((state) => ({
+        sosAlerts: {
+          ...state.sosAlerts,
+          [sosEvent.payload.id]: {
+            ...sosEvent.payload,
+            status: "open",
+          },
+        },
+        focusedSosId: sosEvent.payload.id,
+      }));
+      return;
+    }
+    if (event.type === "sos.acked") {
+      const ackEvent = event as SosAckedEvent;
+      set((state) => {
+        const alert = state.sosAlerts[ackEvent.payload.id];
+        if (!alert) return state;
+        return {
+          sosAlerts: {
+            ...state.sosAlerts,
+            [ackEvent.payload.id]: {
+              ...alert,
+              status: "ack",
+              acknowledgedBy: ackEvent.payload.acknowledgedBy,
+              acknowledgedAt: ackEvent.payload.acknowledgedAt,
+            },
+          },
+        };
+      });
     }
   },
   reset: () =>
@@ -85,5 +136,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
       users: [],
       presence: {},
       locations: {},
+      sosAlerts: {},
+      focusedSosId: null,
     }),
 }));

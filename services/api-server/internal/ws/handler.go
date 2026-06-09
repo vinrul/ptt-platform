@@ -13,25 +13,39 @@ import (
 	"ptt-fleet/services/api-server/internal/apiutil"
 	"ptt-fleet/services/api-server/internal/auth"
 	"ptt-fleet/services/api-server/internal/gps"
+	"ptt-fleet/services/api-server/internal/sos"
 )
 
 type GPSRecorder interface {
 	Record(ctx context.Context, userID string, update gps.Update) (gps.Location, error)
 }
 
+type SOSService interface {
+	Create(ctx context.Context, userID string, input sos.CreateInput) (sos.Event, error)
+	Acknowledge(ctx context.Context, operatorID string, eventID string) (sos.Acknowledgement, error)
+}
+
 type Handler struct {
 	tokens     *auth.TokenManager
 	repository AccessRepository
 	gps        GPSRecorder
+	sos        SOSService
 	hub        *Hub
 	upgrader   websocket.Upgrader
 }
 
-func NewHandler(tokens *auth.TokenManager, repository AccessRepository, gpsRecorder GPSRecorder, hub *Hub) *Handler {
+func NewHandler(
+	tokens *auth.TokenManager,
+	repository AccessRepository,
+	gpsRecorder GPSRecorder,
+	sosService SOSService,
+	hub *Hub,
+) *Handler {
 	return &Handler{
 		tokens:     tokens,
 		repository: repository,
 		gps:        gpsRecorder,
+		sos:        sosService,
 		hub:        hub,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
@@ -120,12 +134,67 @@ func (h *Handler) readLoop(c *gin.Context, connection *Connection) {
 			h.handleGroupJoin(c, connection, event)
 		case "gps.update":
 			h.handleGPSUpdate(c, connection, event)
+		case "sos.create":
+			h.handleSOSCreate(c, connection, event)
+		case "sos.ack":
+			h.handleSOSAck(c, connection, event)
 		default:
 			connection.Send(NewErrorEvent(event.RequestID, "validation_error", "Unsupported event type", map[string]any{
 				"type": event.Type,
 			}))
 		}
 	}
+}
+
+func (h *Handler) handleSOSCreate(c *gin.Context, connection *Connection, event Event) {
+	var payload sos.CreateInput
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "SOS payload is invalid", nil))
+		return
+	}
+
+	created, err := h.sos.Create(c.Request.Context(), connection.UserID, payload)
+	if errors.Is(err, sos.ErrInvalidEvent) {
+		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "SOS location or message is invalid", nil))
+		return
+	}
+	if err != nil {
+		connection.Send(NewErrorEvent(event.RequestID, "server_error", "Unable to create SOS event", nil))
+		return
+	}
+
+	h.hub.BroadcastToOperators(NewEvent("sos.created", event.RequestID, created))
+}
+
+func (h *Handler) handleSOSAck(c *gin.Context, connection *Connection, event Event) {
+	if !isOperatorRole(connection.Role) {
+		connection.Send(NewErrorEvent(event.RequestID, "forbidden", "Only operators can acknowledge SOS events", nil))
+		return
+	}
+
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.ID == "" {
+		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "SOS id is required", nil))
+		return
+	}
+
+	acknowledgement, err := h.sos.Acknowledge(c.Request.Context(), connection.UserID, payload.ID)
+	if errors.Is(err, sos.ErrNotOpen) {
+		connection.Send(NewErrorEvent(event.RequestID, "conflict", "SOS event is no longer open", nil))
+		return
+	}
+	if errors.Is(err, sos.ErrInvalidEvent) {
+		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "SOS id is invalid", nil))
+		return
+	}
+	if err != nil {
+		connection.Send(NewErrorEvent(event.RequestID, "server_error", "Unable to acknowledge SOS event", nil))
+		return
+	}
+
+	h.hub.BroadcastToOperators(NewEvent("sos.acked", event.RequestID, acknowledgement))
 }
 
 func (h *Handler) handleGPSUpdate(c *gin.Context, connection *Connection, event Event) {

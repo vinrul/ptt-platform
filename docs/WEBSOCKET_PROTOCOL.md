@@ -128,9 +128,11 @@ Handler realtime saat ini menerima:
 - `heartbeat`
 - `group.join`
 - `gps.update`
+- `sos.create`
+- `sos.ack` untuk role operator
 
-Event SOS dan PTT tetap menjadi bagian kontrak, tetapi handler-nya
-diaktifkan pada phase masing-masing.
+Event PTT tetap menjadi bagian kontrak, tetapi handler-nya diaktifkan pada phase
+berikutnya.
 
 ## GPS
 
@@ -215,6 +217,10 @@ Server broadcasts:
 }
 ```
 
+Create SOS dapat dikirim tanpa koordinat. Jika salah satu dari `lat` atau `lng`
+diisi, keduanya wajib valid. Server menyimpan SOS dan audit `sos.create` dalam
+satu transaksi, lalu broadcast hanya ke role operator.
+
 Dispatcher acknowledges:
 
 ```json
@@ -243,6 +249,10 @@ Server broadcasts:
   }
 }
 ```
+
+Hanya `super_admin`, `dispatcher`, dan `supervisor` yang boleh mengirim
+`sos.ack`. Ack hanya berhasil untuk SOS berstatus `open`. Perubahan status dan
+audit `sos.ack` disimpan dalam satu transaksi.
 
 ## PTT Control
 

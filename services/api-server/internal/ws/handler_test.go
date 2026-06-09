@@ -14,6 +14,7 @@ import (
 
 	"ptt-fleet/services/api-server/internal/auth"
 	"ptt-fleet/services/api-server/internal/gps"
+	"ptt-fleet/services/api-server/internal/sos"
 )
 
 type fakeAccessRepository struct {
@@ -24,6 +25,27 @@ type fakeAccessRepository struct {
 type fakeGPSRecorder struct {
 	location gps.Location
 	err      error
+}
+
+type fakeSOSService struct{}
+
+func (fakeSOSService) Create(_ context.Context, userID string, input sos.CreateInput) (sos.Event, error) {
+	return sos.Event{
+		ID:      "sos-1",
+		UserID:  userID,
+		Lat:     input.Lat,
+		Lng:     input.Lng,
+		Message: input.Message,
+		Status:  "open",
+	}, nil
+}
+
+func (fakeSOSService) Acknowledge(_ context.Context, operatorID string, eventID string) (sos.Acknowledgement, error) {
+	return sos.Acknowledgement{
+		ID:             eventID,
+		Status:         "ack",
+		AcknowledgedBy: operatorID,
+	}, nil
 }
 
 func (r fakeGPSRecorder) Record(_ context.Context, userID string, update gps.Update) (gps.Location, error) {
@@ -164,6 +186,34 @@ func TestHandlerAcceptsHeartbeat(t *testing.T) {
 	}
 }
 
+func TestHandlerRejectsSOSAckFromFieldUser(t *testing.T) {
+	server, manager, hub := newWebSocketTestServer(t, fakeAccessRepository{
+		identity: Identity{UserID: "user-1", Username: "field1", Role: "field_user"},
+	})
+	defer server.Close()
+	defer hub.CloseAll()
+
+	connection := dialTestConnection(t, server.URL, manager, "user-1", "field1", "field_user")
+	defer connection.Close()
+	_ = readEvent(t, connection)
+
+	if err := connection.WriteJSON(NewEvent("sos.ack", "req-ack", map[string]any{"id": "sos-1"})); err != nil {
+		t.Fatalf("write sos.ack: %v", err)
+	}
+	event := readEvent(t, connection)
+	if event.Type != "error" {
+		t.Fatalf("expected error event, got %s", event.Type)
+	}
+
+	var payload ErrorPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal error payload: %v", err)
+	}
+	if payload.Code != "forbidden" {
+		t.Fatalf("expected forbidden code, got %s", payload.Code)
+	}
+}
+
 func newWebSocketTestServer(t *testing.T, repository AccessRepository) (*httptest.Server, *auth.TokenManager, *Hub) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -172,7 +222,7 @@ func newWebSocketTestServer(t *testing.T, repository AccessRepository) (*httptes
 	hub := NewHub()
 	handler := NewHandler(manager, repository, fakeGPSRecorder{
 		location: gps.Location{RecordedAt: time.Now().UTC().Format(time.RFC3339)},
-	}, hub)
+	}, fakeSOSService{}, hub)
 	router := gin.New()
 	router.GET("/ws", handler.Connect)
 
