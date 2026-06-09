@@ -13,6 +13,9 @@ Fitur sampai Phase 9:
 - GPS realtime melalui Fused Location Provider dengan interval target 15 detik.
 - Permission lokasi baru diminta ketika user menekan `Start GPS tracking`.
 - Update lokasi dikirim sebagai event `gps.update` selama WebSocket terhubung.
+- Tombol SOS dengan dialog konfirmasi mengirim `sos.create`.
+- SOS menyertakan koordinat terakhir jika tersedia dan tetap dapat dikirim tanpa
+  GPS fix.
 - Permission audio, foreground service, notification, dan wake lock tetap belum
   diminta/digunakan sebelum phase terkait.
 
@@ -85,6 +88,8 @@ ANDROID_APK=/path/to/app.apk bun run android:install
 7. Logout dan pastikan session terenkripsi dihapus.
 8. Tekan `Start GPS tracking`, izinkan lokasi, lalu set lokasi emulator.
 9. Pastikan koordinat terbaru tampil di aplikasi dan diterima dispatcher.
+10. Tekan `Send SOS`, konfirmasi, dan pastikan status pengiriman muncul.
+11. Pastikan dispatcher menerima alarm serta lokasi terbaru jika tersedia.
 
 Tracking Phase 9 berjalan saat activity aktif. Foreground patrol service untuk
 tracking background disiapkan pada phase Android patrol/PTT berikutnya.

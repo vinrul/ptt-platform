@@ -16,6 +16,8 @@ Fitur yang tersedia:
 - Connection registry, presence per user, heartbeat timeout, dan group join.
 - Validasi dan persistence `gps.update` ke PostgreSQL.
 - Broadcast `gps.updated` terbatas ke role operator.
+- Create dan acknowledge SOS melalui WebSocket dengan audit log transaksional.
+- Broadcast `sos.created` dan `sos.acked` terbatas ke role operator.
 
 ## Local Commands
 
@@ -57,6 +59,9 @@ Test package WebSocket membuka listener localhost sementara melalui
    setiap 20-30 detik.
 9. Kirim `gps.update` dari field user dan pastikan row masuk ke `gps_logs`.
 10. Pastikan hanya koneksi operator menerima `gps.updated`.
+11. Kirim `sos.create`, pastikan row `sos_events` dan audit `sos.create` dibuat.
+12. Ack dari dispatcher, lalu pastikan status menjadi `ack` dan audit `sos.ack`
+    dibuat.
 
 Kontrak REST tersedia di `docs/API.md`; kontrak realtime tersedia di
 `docs/WEBSOCKET_PROTOCOL.md`.

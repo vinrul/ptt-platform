@@ -185,6 +185,27 @@
                 android:textStyle="bold" />
 
             <Button
+                android:id="@+id/sosButton"
+                android:layout_width="match_parent"
+                android:layout_height="58dp"
+                android:layout_marginTop="20dp"
+                android:backgroundTint="#EF4444"
+                android:text="@string/send_sos"
+                android:textAllCaps="true"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/sosStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="@string/sos_ready"
+                android:textColor="@color/fleet_muted"
+                android:textSize="12sp" />
+
+            <Button
                 android:id="@+id/logoutButton"
                 android:layout_width="match_parent"
                 android:layout_height="50dp"

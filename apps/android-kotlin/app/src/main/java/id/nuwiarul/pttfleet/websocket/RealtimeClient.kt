@@ -80,6 +80,22 @@ class RealtimeClient(
     }
 
     @Synchronized
+    fun sendSos(sample: GpsSample?, message: String = "Emergency"): Boolean {
+        val payload = JSONObject().put("message", message)
+        sample?.let {
+            payload.put("lat", it.lat)
+            payload.put("lng", it.lng)
+        }
+
+        val event = JSONObject()
+            .put("type", "sos.create")
+            .put("requestId", "android-${System.currentTimeMillis()}")
+            .put("timestamp", Instant.now().toString())
+            .put("payload", payload)
+        return socket?.send(event.toString()) == true
+    }
+
+    @Synchronized
     private fun openSocket() {
         val activeSession = session ?: return
         if (stopped || socket != null) return

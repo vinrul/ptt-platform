@@ -13,6 +13,7 @@ export function DispatcherPage() {
   const users = useRealtimeStore((state) => state.users);
   const presence = useRealtimeStore((state) => state.presence);
   const connectionStatus = useRealtimeStore((state) => state.connectionStatus);
+  const sosAlerts = useRealtimeStore((state) => state.sosAlerts);
   const setUsers = useRealtimeStore((state) => state.setUsers);
   const applyEvent = useRealtimeStore((state) => state.applyEvent);
   const setConnectionStatus = useRealtimeStore((state) => state.setConnectionStatus);
@@ -68,11 +69,41 @@ export function DispatcherPage() {
     () => users.filter((user) => presence[user.id]?.status === "online").length,
     [presence, users],
   );
+  const activeSosCount = Object.values(sosAlerts).filter((alert) => alert.status === "open").length;
+
+  useEffect(() => {
+    if (activeSosCount === 0) {
+      document.title = "PTT Fleet Dispatcher";
+      return;
+    }
+    document.title = `(${activeSosCount}) SOS · PTT Fleet`;
+    const audioContext = new AudioContext();
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.frequency.value = 880;
+    gain.gain.value = 0.08;
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + 0.35);
+    return () => {
+      void audioContext.close();
+    };
+  }, [activeSosCount]);
 
   function handleLogout() {
     realtimeRef.current?.disconnect();
     resetRealtime();
     clearSession();
+  }
+
+  function acknowledgeSos(id: string) {
+    realtimeRef.current?.send({
+      type: "sos.ack",
+      requestId: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      payload: { id },
+    });
   }
 
   return (
@@ -160,7 +191,7 @@ export function DispatcherPage() {
           </aside>
 
           <section className="min-h-[460px]">
-            <DispatcherMap />
+            <DispatcherMap onAcknowledgeSos={acknowledgeSos} />
           </section>
         </div>
 
@@ -182,7 +213,7 @@ export function DispatcherPage() {
           </button>
 
           <div className="text-right text-[11px] uppercase tracking-wider text-stone-600">
-            SOS alerts · no active events
+            SOS alerts · {activeSosCount} active
           </div>
         </footer>
       </div>

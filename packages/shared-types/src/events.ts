@@ -68,6 +68,27 @@ export type SosCreatedEvent = RealtimeEvent<
   }
 >;
 
+export type SosCreateEvent = RealtimeEvent<
+  "sos.create",
+  {
+    lat?: number;
+    lng?: number;
+    message: string;
+  }
+>;
+
+export type SosAckEvent = RealtimeEvent<"sos.ack", { id: string }>;
+
+export type SosAckedEvent = RealtimeEvent<
+  "sos.acked",
+  {
+    id: string;
+    status: "ack";
+    acknowledgedBy: string;
+    acknowledgedAt: string;
+  }
+>;
+
 export type PttStateEvent =
   | RealtimeEvent<"ptt.granted", { sessionId: string; groupId: string }>
   | RealtimeEvent<"ptt.busy", { groupId: string; speakerUserId: string }>
@@ -91,7 +112,12 @@ export type ErrorEvent = RealtimeEvent<
   }
 >;
 
-export type ClientRealtimeEvent = HeartbeatEvent | GroupJoinEvent | GpsUpdateEvent;
+export type ClientRealtimeEvent =
+  | HeartbeatEvent
+  | GroupJoinEvent
+  | GpsUpdateEvent
+  | SosCreateEvent
+  | SosAckEvent;
 
 export type ServerRealtimeEvent =
   | ConnectionReadyEvent
@@ -99,5 +125,6 @@ export type ServerRealtimeEvent =
   | GroupJoinedEvent
   | GpsUpdatedEvent
   | SosCreatedEvent
+  | SosAckedEvent
   | PttStateEvent
   | ErrorEvent;

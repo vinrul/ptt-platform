@@ -15,6 +15,8 @@ Fitur sampai Phase 9:
 - MapTalks lifecycle terpisah agar map tidak dibuat ulang saat state berubah.
 - Marker unit dibuat dan digeser langsung saat menerima `gps.updated`.
 - Peta otomatis fokus ke marker pertama dan menampilkan jumlah unit terlacak.
+- Alarm SOS visual dan bunyi singkat saat emergency aktif.
+- Marker SOS merah, auto-zoom ke lokasi, dan acknowledge dari dispatcher.
 
 ## Run Local
 
@@ -41,3 +43,6 @@ bun --filter dispatcher-web test
 bun --filter dispatcher-web lint
 bun --filter dispatcher-web build
 ```
+
+Browser dapat membatasi bunyi alarm sebelum ada interaksi user. Login dispatcher
+menjadi interaksi awal yang biasanya mengizinkan alarm berikutnya.

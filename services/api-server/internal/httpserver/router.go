@@ -11,6 +11,7 @@ import (
 	"ptt-fleet/services/api-server/internal/db"
 	"ptt-fleet/services/api-server/internal/gps"
 	"ptt-fleet/services/api-server/internal/groups"
+	"ptt-fleet/services/api-server/internal/sos"
 	"ptt-fleet/services/api-server/internal/users"
 	realtime "ptt-fleet/services/api-server/internal/ws"
 )
@@ -61,7 +62,13 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	authHandler := auth.NewHandler(authService)
 	userHandler := users.NewHandler(users.NewService(store))
 	groupHandler := groups.NewHandler(groups.NewService(store))
-	websocketHandler := realtime.NewHandler(tokenManager, realtime.NewRepository(store), gps.NewService(store), hub)
+	websocketHandler := realtime.NewHandler(
+		tokenManager,
+		realtime.NewRepository(store),
+		gps.NewService(store),
+		sos.NewService(store),
+		hub,
+	)
 
 	router.GET("/ws", websocketHandler.Connect)
 

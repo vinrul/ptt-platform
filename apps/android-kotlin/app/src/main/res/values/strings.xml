@@ -28,4 +28,11 @@
     <string name="location_permission_denied">Location permission was denied.</string>
     <string name="location_sent">GPS sent · %1$.5f, %2$.5f</string>
     <string name="location_not_sent">GPS queued while offline · %1$.5f, %2$.5f</string>
+    <string name="send_sos">Send SOS</string>
+    <string name="sos_ready">Emergency alert is ready.</string>
+    <string name="sos_confirm_title">Send emergency alert?</string>
+    <string name="sos_confirm_message">The dispatcher will receive an urgent SOS notification and your latest location when available.</string>
+    <string name="sos_sent">SOS alert sent to dispatcher.</string>
+    <string name="sos_not_sent">Unable to send SOS while realtime is offline.</string>
+    <string name="cancel">Cancel</string>
 </resources>

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.View
+import androidx.appcompat.app.AlertDialog
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -32,6 +33,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private val authRepository = AuthRepository(httpClient)
     private var realtimeClient: RealtimeClient? = null
     private lateinit var locationTracker: LocationTracker
+    private var latestLocation: GpsSample? = null
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { permissions ->
@@ -57,6 +59,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         binding.loginButton.setOnClickListener { login() }
         binding.logoutButton.setOnClickListener { logout() }
         binding.locationToggleButton.setOnClickListener { toggleTracking() }
+        binding.sosButton.setOnClickListener { confirmSos() }
 
         tokenStore.load()?.let { showSession(it) } ?: showLogin()
     }
@@ -168,12 +171,27 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun handleLocation(sample: GpsSample) {
+        latestLocation = sample
         val sent = realtimeClient?.sendGps(sample) == true
         binding.locationStatusText.text = getString(
             if (sent) R.string.location_sent else R.string.location_not_sent,
             sample.lat,
             sample.lng,
         )
+    }
+
+    private fun confirmSos() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.sos_confirm_title)
+            .setMessage(R.string.sos_confirm_message)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.send_sos) { _, _ -> sendSos() }
+            .show()
+    }
+
+    private fun sendSos() {
+        val sent = realtimeClient?.sendSos(latestLocation) == true
+        binding.sosStatusText.setText(if (sent) R.string.sos_sent else R.string.sos_not_sent)
     }
 
     private fun setLoginLoading(loading: Boolean) {
