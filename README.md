@@ -38,8 +38,22 @@ bun run dev:api
 bun run dev:web
 ```
 
+Dispatcher development tersedia di `http://localhost:5173`. Vite mem-proxy
+request `/api` dan `/ws` ke backend local port `8080`.
+
+Android project berada di `apps/android-kotlin`. Emulator memakai server URL
+`http://10.0.2.2:8080`; perangkat fisik memakai IP LAN mesin development.
+
+Untuk menjalankan emulator, install debug APK, dan membuka app sekaligus:
+
+```bash
+bun run android:run
+```
+
 Development memakai Docker Compose sejak awal. Pada fase pertama, Compose local
-menjalankan PostgreSQL dan Redis. Backend API bisa dijalankan lewat
+menjalankan PostgreSQL, Redis, dan Pgweb. Pgweb tersedia di
+`http://localhost:8081` dan langsung terhubung ke database PostgreSQL dari
+Compose tanpa setup koneksi manual. Backend API bisa dijalankan lewat
 `bun run docker:api` setelah Dockerfile backend tersedia. Setelah Dockerfile
 semua aplikasi tersedia, `bun run docker:local:app` bisa menjalankan stack penuh
 lewat Docker.

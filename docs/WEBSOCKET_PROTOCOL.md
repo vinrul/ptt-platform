@@ -11,6 +11,10 @@ GET /ws?token=<jwt>
 JWT harus valid. Token invalid ditolak sebelum upgrade atau langsung close
 dengan policy violation.
 
+Server juga memeriksa ulang bahwa user masih ada dan berstatus `active` sebelum
+melakukan upgrade. Role koneksi diambil dari database agar perubahan role segera
+berlaku pada koneksi baru.
+
 ## JSON Event Envelope
 
 Semua event JSON:
@@ -62,6 +66,9 @@ Client kirim setiap 20-30 detik:
 
 Server disconnect jika heartbeat hilang lebih dari 90 detik.
 
+Heartbeat tidak menghasilkan event response. Heartbeat yang valid memperpanjang
+deadline koneksi selama 90 detik berikutnya.
+
 ## Presence
 
 Server broadcast:
@@ -111,6 +118,20 @@ Server:
 }
 ```
 
+Server hanya menerima join jika user terdaftar di `group_members`. Join yang
+tidak diizinkan menghasilkan event `error` dengan code `forbidden`.
+
+## Supported Events by Phase
+
+Handler realtime saat ini menerima:
+
+- `heartbeat`
+- `group.join`
+- `gps.update`
+
+Event SOS dan PTT tetap menjadi bagian kontrak, tetapi handler-nya
+diaktifkan pada phase masing-masing.
+
 ## GPS
 
 Android client sends:
@@ -147,11 +168,16 @@ Server broadcasts to dispatcher:
 }
 ```
 
+Server menyimpan setiap update ke `gps_logs`, lalu mengirim `gps.updated` hanya
+ke koneksi dengan role `super_admin`, `dispatcher`, atau `supervisor`.
+
 Validation:
 
 - `lat` between -90 and 90.
 - `lng` between -180 and 180.
-- `accuracy` must be positive if present.
+- `speed` tidak boleh negatif jika ada.
+- `heading` harus antara 0 (inklusif) dan 360 (eksklusif) jika ada.
+- `accuracy` tidak boleh negatif jika ada.
 
 ## SOS
 
@@ -375,3 +401,14 @@ Common codes:
 - `group_not_joined`
 - `ptt_busy`
 - `server_error`
+
+## Connection Lifecycle
+
+- `connection.ready` selalu menjadi event pertama untuk koneksi valid.
+- Presence dihitung per user, bukan per socket.
+- `presence.updated` dengan status `online` dikirim saat koneksi pertama user
+  aktif.
+- `presence.updated` dengan status `offline` dikirim setelah koneksi terakhir
+  user tertutup atau timeout.
+- Presence hanya dikirim ke koneksi dengan role `super_admin`, `dispatcher`,
+  atau `supervisor`.

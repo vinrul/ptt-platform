@@ -9,6 +9,7 @@ wajib berjalan untuk backend development:
 
 - PostgreSQL.
 - Redis.
+- Pgweb untuk inspeksi database.
 
 Service aplikasi (`api-server` dan `dispatcher-web`) disiapkan dalam profile
 `app`, sehingga bisa diaktifkan setelah Dockerfile masing-masing tersedia.
@@ -19,6 +20,7 @@ Service local minimal:
 
 - PostgreSQL.
 - Redis.
+- Pgweb.
 - api-server.
 - dispatcher-web.
 
@@ -26,7 +28,7 @@ Command target:
 
 ```bash
 cp .env.example .env
-docker compose -f infra/docker/docker-compose.local.yml --env-file .env up -d postgres redis
+docker compose -f infra/docker/docker-compose.local.yml --env-file .env up -d --remove-orphans postgres redis pgweb
 ```
 
 Atau via Bun script:
@@ -65,9 +67,13 @@ JWT_SECRET=change-me-use-32-byte-random
 POSTGRES_DB=ptt_fleet
 POSTGRES_USER=ptt
 POSTGRES_PASSWORD=ptt
+PGWEB_PORT=8081
 PUBLIC_API_URL=http://localhost:8080
 PUBLIC_WS_URL=ws://localhost:8080/ws
 ```
+
+Pgweb tersedia di `http://localhost:8081` dan memakai `DATABASE_URL` yang
+langsung mengarah ke service `postgres`. Tidak ada setup koneksi manual.
 
 Jika menjalankan backend langsung dari host dengan `go run`, gunakan override:
 

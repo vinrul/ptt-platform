@@ -29,6 +29,8 @@ export type GroupJoinEvent = RealtimeEvent<"group.join", { groupId: string }>;
 
 export type GroupJoinedEvent = RealtimeEvent<"group.joined", { groupId: string }>;
 
+export type HeartbeatEvent = RealtimeEvent<"heartbeat", Record<string, never>>;
+
 export type GpsUpdateEvent = RealtimeEvent<
   "gps.update",
   {
@@ -80,10 +82,22 @@ export type PttStateEvent =
       }
     >;
 
+export type ErrorEvent = RealtimeEvent<
+  "error",
+  {
+    code: string;
+    message: string;
+    details: Record<string, unknown>;
+  }
+>;
+
+export type ClientRealtimeEvent = HeartbeatEvent | GroupJoinEvent | GpsUpdateEvent;
+
 export type ServerRealtimeEvent =
   | ConnectionReadyEvent
   | PresenceUpdatedEvent
   | GroupJoinedEvent
   | GpsUpdatedEvent
   | SosCreatedEvent
-  | PttStateEvent;
+  | PttStateEvent
+  | ErrorEvent;

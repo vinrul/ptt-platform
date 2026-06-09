@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="36dp"
+            android:letterSpacing="0.18"
+            android:text="@string/brand_name"
+            android:textColor="@color/fleet_primary"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center"
+            android:text="@string/login_title"
+            android:textColor="@color/fleet_text"
+            android:textSize="32sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text="@string/login_subtitle"
+            android:textColor="@color/fleet_muted"
+            android:textSize="15sp" />
+
+        <LinearLayout
+            android:id="@+id/loginPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:background="@drawable/card_background"
+            android:orientation="vertical">
+
+            <EditText
+                android:id="@+id/serverUrlInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/input_background"
+                android:hint="@string/server_url"
+                android:importantForAutofill="no"
+                android:inputType="textUri"
+                android:singleLine="true"
+                android:text="@string/default_server_url"
+                android:textColor="@color/fleet_text"
+                android:textColorHint="@color/fleet_muted" />
+
+            <EditText
+                android:id="@+id/usernameInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/input_background"
+                android:autofillHints="username"
+                android:hint="@string/username"
+                android:inputType="text"
+                android:singleLine="true"
+                android:textColor="@color/fleet_text"
+                android:textColorHint="@color/fleet_muted" />
+
+            <EditText
+                android:id="@+id/passwordInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/input_background"
+                android:autofillHints="password"
+                android:hint="@string/password"
+                android:inputType="textPassword"
+                android:singleLine="true"
+                android:textColor="@color/fleet_text"
+                android:textColorHint="@color/fleet_muted" />
+
+            <TextView
+                android:id="@+id/loginError"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textColor="#FFAAA1"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/loginButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="18dp"
+                android:background="@drawable/button_primary"
+                android:text="@string/login"
+                android:textAllCaps="false"
+                android:textColor="@color/fleet_primary_dark"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/sessionPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:background="@drawable/card_background"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:letterSpacing="0.12"
+                android:text="@string/patrol_session"
+                android:textColor="@color/fleet_warning"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/userNameText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textColor="@color/fleet_text"
+                android:textSize="25sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/userRoleText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="@color/fleet_muted"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/connectionStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="22dp"
+                android:background="@drawable/input_background"
+                android:padding="16dp"
+                android:text="@string/connection_idle"
+                android:textColor="@color/fleet_primary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/connectionDetailText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/channel_waiting"
+                android:textColor="@color/fleet_muted"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/locationStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:text="@string/location_stopped"
+                android:textColor="@color/fleet_muted"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/locationToggleButton"
+                android:layout_width="match_parent"
+                android:layout_height="50dp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/button_primary"
+                android:text="@string/start_tracking"
+                android:textAllCaps="false"
+                android:textColor="@color/fleet_primary_dark"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/logoutButton"
+                android:layout_width="match_parent"
+                android:layout_height="50dp"
+                android:layout_marginTop="24dp"
+                android:background="@drawable/input_background"
+                android:text="@string/logout"
+                android:textAllCaps="false"
+                android:textColor="@color/fleet_text" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

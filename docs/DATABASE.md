@@ -225,7 +225,10 @@ Initial actions:
 - `user.created`
 - `user.updated`
 - `group.created`
+- `group.updated`
+- `group.deleted`
 - `group.member_added`
+- `group.member_removed`
 - `sos.created`
 - `sos.acked`
 - `ptt.started`

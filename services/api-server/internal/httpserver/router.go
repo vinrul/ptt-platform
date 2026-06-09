@@ -6,13 +6,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ptt-fleet/services/api-server/internal/auth"
 	"ptt-fleet/services/api-server/internal/config"
 	"ptt-fleet/services/api-server/internal/db"
+	"ptt-fleet/services/api-server/internal/gps"
+	"ptt-fleet/services/api-server/internal/groups"
+	"ptt-fleet/services/api-server/internal/users"
+	realtime "ptt-fleet/services/api-server/internal/ws"
 )
 
-func NewRouter(cfg config.Config, store *db.Store) *gin.Engine {
+func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engine {
 	if cfg.AppEnv == "production" {
 		gin.SetMode(gin.ReleaseMode)
+	}
+	if hub == nil {
+		hub = realtime.NewHub()
 	}
 
 	router := gin.New()
@@ -47,6 +55,38 @@ func NewRouter(cfg config.Config, store *db.Store) *gin.Engine {
 			"version": "0.0.0",
 		})
 	})
+
+	tokenManager := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTTL())
+	authService := auth.NewService(store, tokenManager, cfg.RefreshTTL())
+	authHandler := auth.NewHandler(authService)
+	userHandler := users.NewHandler(users.NewService(store))
+	groupHandler := groups.NewHandler(groups.NewService(store))
+	websocketHandler := realtime.NewHandler(tokenManager, realtime.NewRepository(store), gps.NewService(store), hub)
+
+	router.GET("/ws", websocketHandler.Connect)
+
+	authRoutes := api.Group("/auth")
+	authRoutes.POST("/login", authHandler.Login)
+	authRoutes.POST("/refresh", authHandler.Refresh)
+
+	protected := api.Group("")
+	protected.Use(auth.Middleware(tokenManager))
+	protected.POST("/auth/logout", authHandler.Logout)
+	protected.GET("/auth/me", authHandler.Me)
+
+	protected.GET("/users", userHandler.List)
+	protected.POST("/users", userHandler.Create)
+	protected.GET("/users/:id", userHandler.Get)
+	protected.PATCH("/users/:id", userHandler.Update)
+	protected.DELETE("/users/:id", userHandler.Delete)
+
+	protected.GET("/groups", groupHandler.List)
+	protected.POST("/groups", groupHandler.Create)
+	protected.GET("/groups/:id", groupHandler.Get)
+	protected.PATCH("/groups/:id", groupHandler.Update)
+	protected.DELETE("/groups/:id", groupHandler.Delete)
+	protected.POST("/groups/:id/members", groupHandler.AddMember)
+	protected.DELETE("/groups/:id/members/:userId", groupHandler.RemoveMember)
 
 	return router
 }

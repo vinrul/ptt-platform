@@ -1,6 +1,43 @@
 # Dispatcher Web
 
-Placeholder workspace for the Bun + React + TypeScript + Vite dispatcher.
+Web dispatcher berbasis Bun, React, TypeScript, Vite, MapTalks, Zustand, dan
+Tailwind CSS.
 
-Implementation starts in the dispatcher phase after backend auth and WebSocket
-foundation are ready.
+Fitur sampai Phase 9:
+
+- Login melalui `POST /api/auth/login`.
+- Session operator tersimpan di local storage.
+- Fetch user dan group dari REST API.
+- WebSocket reconnect dengan exponential backoff.
+- Heartbeat setiap 25 detik.
+- Presence user realtime.
+- Group selector dan `group.join`.
+- MapTalks lifecycle terpisah agar map tidak dibuat ulang saat state berubah.
+- Marker unit dibuat dan digeser langsung saat menerima `gps.updated`.
+- Peta otomatis fokus ke marker pertama dan menampilkan jumlah unit terlacak.
+
+## Run Local
+
+Jalankan backend di port `8080`, lalu:
+
+```bash
+bun --filter dispatcher-web dev
+```
+
+Buka `http://localhost:5173`. Vite meneruskan `/api` dan `/ws` ke backend local,
+sehingga development tidak memerlukan konfigurasi CORS tambahan.
+
+Optional production/build-time environment:
+
+```env
+VITE_API_URL=https://api.ptt.example.com
+VITE_WS_URL=wss://api.ptt.example.com/ws
+```
+
+## Validation
+
+```bash
+bun --filter dispatcher-web test
+bun --filter dispatcher-web lint
+bun --filter dispatcher-web build
+```

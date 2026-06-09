@@ -13,6 +13,7 @@ import (
 	"ptt-fleet/services/api-server/internal/config"
 	"ptt-fleet/services/api-server/internal/db"
 	"ptt-fleet/services/api-server/internal/httpserver"
+	"ptt-fleet/services/api-server/internal/ws"
 )
 
 func main() {
@@ -36,9 +37,12 @@ func run() error {
 	}
 	defer store.Close()
 
+	realtimeHub := ws.NewHub()
+	defer realtimeHub.CloseAll()
+
 	server := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpserver.NewRouter(cfg, store),
+		Handler:           httpserver.NewRouter(cfg, store, realtimeHub),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

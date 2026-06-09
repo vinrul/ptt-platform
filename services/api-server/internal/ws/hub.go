@@ -1,0 +1,132 @@
+package ws
+
+import (
+	"crypto/rand"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+type Hub struct {
+	mu          sync.RWMutex
+	connections map[string]*Connection
+	userCounts  map[string]int
+}
+
+func NewHub() *Hub {
+	return &Hub{
+		connections: make(map[string]*Connection),
+		userCounts:  make(map[string]int),
+	}
+}
+
+func (h *Hub) NewConnection(identity Identity, socket *websocket.Conn) (*Connection, error) {
+	connectionID, err := newConnectionID()
+	if err != nil {
+		return nil, err
+	}
+	return newConnection(connectionID, identity, socket), nil
+}
+
+func (h *Hub) Register(connection *Connection) {
+	h.mu.Lock()
+	h.connections[connection.ID] = connection
+	h.userCounts[connection.UserID]++
+	firstConnection := h.userCounts[connection.UserID] == 1
+	h.mu.Unlock()
+
+	if firstConnection {
+		h.broadcastPresence(connection.UserID, "online")
+	}
+}
+
+func (h *Hub) Unregister(connection *Connection) {
+	h.mu.Lock()
+	if _, exists := h.connections[connection.ID]; !exists {
+		h.mu.Unlock()
+		return
+	}
+
+	delete(h.connections, connection.ID)
+	h.userCounts[connection.UserID]--
+	lastConnection := h.userCounts[connection.UserID] == 0
+	if lastConnection {
+		delete(h.userCounts, connection.UserID)
+	}
+	h.mu.Unlock()
+
+	connection.Close(websocket.CloseNormalClosure, "connection closed")
+	if lastConnection {
+		h.broadcastPresence(connection.UserID, "offline")
+	}
+}
+
+func (h *Hub) CloseAll() {
+	h.mu.RLock()
+	connections := make([]*Connection, 0, len(h.connections))
+	for _, connection := range h.connections {
+		connections = append(connections, connection)
+	}
+	h.mu.RUnlock()
+
+	for _, connection := range connections {
+		h.Unregister(connection)
+	}
+}
+
+func (h *Hub) ConnectionCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.connections)
+}
+
+func (h *Hub) UserConnectionCount(userID string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.userCounts[userID]
+}
+
+func (h *Hub) BroadcastToOperators(event OutboundEvent) {
+	h.mu.RLock()
+	recipients := make([]*Connection, 0)
+	for _, connection := range h.connections {
+		if isOperatorRole(connection.Role) {
+			recipients = append(recipients, connection)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, connection := range recipients {
+		connection.Send(event)
+	}
+}
+
+func (h *Hub) broadcastPresence(userID string, status string) {
+	event := NewEvent("presence.updated", "", map[string]any{
+		"userId":     userID,
+		"status":     status,
+		"lastSeenAt": time.Now().UTC().Format(time.RFC3339),
+	})
+
+	h.BroadcastToOperators(event)
+}
+
+func newConnectionID() (string, error) {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	value[6] = (value[6] & 0x0f) | 0x40
+	value[8] = (value[8] & 0x3f) | 0x80
+
+	return fmt.Sprintf(
+		"%x-%x-%x-%x-%x",
+		value[0:4],
+		value[4:6],
+		value[6:8],
+		value[8:10],
+		value[10:16],
+	), nil
+}
