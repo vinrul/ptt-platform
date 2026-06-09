@@ -24,6 +24,13 @@ Access token TTL default: 15 menit.
 
 Refresh token TTL default: 720 jam.
 
+Role authorization untuk endpoint user dan group:
+
+- `super_admin`: akses penuh user, group, dan membership.
+- `dispatcher`: baca user/group serta create, update, dan disable `field_user`.
+- `supervisor`: read-only user dan group.
+- `field_user`: tidak boleh mengakses endpoint administrasi.
+
 ## Response Format
 
 Success response boleh langsung mengembalikan resource:
@@ -127,9 +134,18 @@ Response:
 ```json
 {
   "accessToken": "jwt",
-  "refreshToken": "new-token"
+  "refreshToken": "new-token",
+  "user": {
+    "id": "uuid",
+    "username": "admin",
+    "fullName": "Admin",
+    "role": "super_admin",
+    "status": "active"
+  }
 }
 ```
+
+Refresh token dirotasi setiap kali dipakai. Token lama langsung di-revoke.
 
 ## Authenticated Endpoints
 
@@ -190,6 +206,9 @@ Request:
 }
 ```
 
+Password minimal 8 karakter. Dispatcher hanya boleh membuat user dengan role
+`field_user`.
+
 ### GET /api/users/:id
 
 Returns user detail.
@@ -206,15 +225,26 @@ Request:
 }
 ```
 
+Hanya super admin yang boleh mengubah role. Dispatcher hanya boleh mengubah
+`field_user`.
+
 ### DELETE /api/users/:id
 
 MVP behavior: soft delete by setting `status = disabled`.
+
+User tidak boleh menonaktifkan akunnya sendiri.
 
 ## Groups
 
 ### GET /api/groups
 
-Returns group list.
+Response:
+
+```json
+{
+  "items": []
+}
+```
 
 ### POST /api/groups
 
@@ -229,7 +259,7 @@ Request:
 
 ### GET /api/groups/:id
 
-Returns group detail.
+Returns group detail beserta array `members`.
 
 ### PATCH /api/groups/:id
 
@@ -257,9 +287,19 @@ Request:
 }
 ```
 
+`roleInGroup` harus salah satu dari `member`, `dispatcher`, atau `supervisor`.
+
 ### DELETE /api/groups/:id/members/:userId
 
 Removes member from group.
+
+## Common Status Codes
+
+- `400`: request atau filter tidak valid.
+- `401`: access/refresh token tidak valid atau kedaluwarsa.
+- `403`: role tidak memiliki izin atau akun disabled.
+- `404`: resource tidak ditemukan.
+- `409`: username/name duplicate, membership duplicate, atau group masih berisi member.
 
 ## Devices
 

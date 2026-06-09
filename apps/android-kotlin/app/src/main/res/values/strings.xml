@@ -1,0 +1,31 @@
+<resources>
+    <string name="app_name">PTT Fleet</string>
+    <string name="brand_name">PTT FLEET</string>
+    <string name="login_title">Field radio access</string>
+    <string name="login_subtitle">Connect this device to the PTT Fleet server.</string>
+    <string name="server_url">Server URL</string>
+    <string name="username">Username</string>
+    <string name="password">Password</string>
+    <string name="default_server_url">http://10.0.2.2:8080</string>
+    <string name="login">Connect</string>
+    <string name="connecting">Connecting…</string>
+    <string name="logout">Logout</string>
+    <string name="connection_idle">Offline</string>
+    <string name="connection_connecting">Connecting</string>
+    <string name="connection_connected">Connected</string>
+    <string name="connection_reconnecting">Reconnecting</string>
+    <string name="channel_waiting">Channel join is enabled after groups are loaded.</string>
+    <string name="user_identity">%1$s · %2$s</string>
+    <string name="realtime_opening">Opening secure realtime channel…</string>
+    <string name="realtime_ready">Realtime ready · %1$s</string>
+    <string name="patrol_session">PATROL SESSION</string>
+    <string name="login_fields_required">Server URL, username, and password are required.</string>
+    <string name="login_failed">Login failed.</string>
+    <string name="start_tracking">Start GPS tracking</string>
+    <string name="stop_tracking">Stop GPS tracking</string>
+    <string name="location_stopped">GPS tracking is stopped.</string>
+    <string name="location_waiting">Waiting for a location fix…</string>
+    <string name="location_permission_denied">Location permission was denied.</string>
+    <string name="location_sent">GPS sent · %1$.5f, %2$.5f</string>
+    <string name="location_not_sent">GPS queued while offline · %1$.5f, %2$.5f</string>
+</resources>

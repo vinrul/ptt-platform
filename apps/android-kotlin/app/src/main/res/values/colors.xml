@@ -1,0 +1,11 @@
+<resources>
+    <color name="fleet_background">#08110F</color>
+    <color name="fleet_surface">#111A17</color>
+    <color name="fleet_surface_alt">#18231F</color>
+    <color name="fleet_primary">#87E7BC</color>
+    <color name="fleet_primary_dark">#0B3B2B</color>
+    <color name="fleet_text">#F4F4F0</color>
+    <color name="fleet_muted">#9B9F9B</color>
+    <color name="fleet_border">#34423C</color>
+    <color name="fleet_warning">#E7B66C</color>
+</resources>
