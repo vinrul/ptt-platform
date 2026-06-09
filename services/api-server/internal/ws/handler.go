@@ -2,8 +2,11 @@ package ws
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"ptt-fleet/services/api-server/internal/apiutil"
 	"ptt-fleet/services/api-server/internal/auth"
 	"ptt-fleet/services/api-server/internal/gps"
+	"ptt-fleet/services/api-server/internal/ptt"
 	"ptt-fleet/services/api-server/internal/sos"
 )
 
@@ -30,6 +34,7 @@ type Handler struct {
 	repository AccessRepository
 	gps        GPSRecorder
 	sos        SOSService
+	ptt        *ptt.Manager
 	hub        *Hub
 	upgrader   websocket.Upgrader
 }
@@ -39,6 +44,7 @@ func NewHandler(
 	repository AccessRepository,
 	gpsRecorder GPSRecorder,
 	sosService SOSService,
+	pttManager *ptt.Manager,
 	hub *Hub,
 ) *Handler {
 	return &Handler{
@@ -46,6 +52,7 @@ func NewHandler(
 		repository: repository,
 		gps:        gpsRecorder,
 		sos:        sosService,
+		ptt:        pttManager,
 		hub:        hub,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
@@ -105,7 +112,10 @@ func (h *Handler) Connect(c *gin.Context) {
 		"role":         connection.Role,
 	}))
 	h.hub.Register(connection)
-	defer h.hub.Unregister(connection)
+	defer func() {
+		h.releaseConnectionPTT(connection)
+		h.hub.Unregister(connection)
+	}()
 
 	h.readLoop(c, connection)
 }
@@ -116,8 +126,12 @@ func (h *Handler) readLoop(c *gin.Context, connection *Connection) {
 		if err != nil {
 			return
 		}
+		if messageType == websocket.BinaryMessage {
+			h.handleAudioFrame(connection, data)
+			continue
+		}
 		if messageType != websocket.TextMessage {
-			connection.Send(NewErrorEvent("", "validation_error", "Only JSON text events are accepted in this phase", nil))
+			connection.Send(NewErrorEvent("", "validation_error", "Unsupported WebSocket message type", nil))
 			continue
 		}
 
@@ -138,12 +152,133 @@ func (h *Handler) readLoop(c *gin.Context, connection *Connection) {
 			h.handleSOSCreate(c, connection, event)
 		case "sos.ack":
 			h.handleSOSAck(c, connection, event)
+		case "ptt.start":
+			h.handlePTTStart(c, connection, event)
+		case "ptt.stop":
+			h.handlePTTStop(c, connection, event)
 		default:
 			connection.Send(NewErrorEvent(event.RequestID, "validation_error", "Unsupported event type", map[string]any{
 				"type": event.Type,
 			}))
 		}
 	}
+}
+
+func (h *Handler) handlePTTStart(c *gin.Context, connection *Connection, event Event) {
+	var payload struct {
+		GroupID string `json:"groupId"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.GroupID == "" {
+		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "groupId is required", nil))
+		return
+	}
+	if !connection.HasJoinedGroup(payload.GroupID) {
+		connection.Send(NewErrorEvent(event.RequestID, "group_not_joined", "Join the group before starting PTT", nil))
+		return
+	}
+
+	session, busy, err := h.ptt.Start(
+		c.Request.Context(),
+		payload.GroupID,
+		connection.UserID,
+		connection.ID,
+	)
+	if errors.Is(err, ptt.ErrBusy) {
+		connection.Send(NewEvent("ptt.busy", event.RequestID, map[string]any{
+			"groupId":       payload.GroupID,
+			"speakerUserId": busy.SpeakerUserID,
+		}))
+		return
+	}
+	if err != nil {
+		connection.Send(NewErrorEvent(event.RequestID, "server_error", "Unable to start PTT session", nil))
+		return
+	}
+
+	connection.Send(NewEvent("ptt.granted", event.RequestID, map[string]any{
+		"sessionId": session.ID,
+		"groupId":   session.GroupID,
+	}))
+	h.hub.BroadcastToGroup(session.GroupID, NewEvent("ptt.started", "", map[string]any{
+		"sessionId":     session.ID,
+		"groupId":       session.GroupID,
+		"speakerUserId": session.SpeakerUserID,
+	}))
+}
+
+func (h *Handler) handlePTTStop(c *gin.Context, connection *Connection, event Event) {
+	var payload struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.SessionID == "" {
+		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "sessionId is required", nil))
+		return
+	}
+
+	session, err := h.ptt.Stop(
+		c.Request.Context(),
+		payload.SessionID,
+		connection.UserID,
+		connection.ID,
+		"user_stop",
+	)
+	if errors.Is(err, ptt.ErrInvalidSession) || errors.Is(err, ptt.ErrNotSpeaker) {
+		connection.Send(NewErrorEvent(event.RequestID, "forbidden", "PTT session is not owned by this connection", nil))
+		return
+	}
+	if err != nil {
+		connection.Send(NewErrorEvent(event.RequestID, "server_error", "Unable to stop PTT session", nil))
+		return
+	}
+
+	h.broadcastPTTStopped(session, event.RequestID, "user_stop")
+}
+
+func (h *Handler) handleAudioFrame(connection *Connection, data []byte) {
+	if len(data) <= 25 || data[0] != 0x01 {
+		return
+	}
+	sessionID := binaryUUID(data[1:17])
+	sequence := binary.BigEndian.Uint64(data[17:25])
+	session, gap, err := h.ptt.ValidateFrame(sessionID, connection.UserID, connection.ID, sequence)
+	if err != nil {
+		return
+	}
+	if gap {
+		log.Printf("PTT sequence gap session=%s sequence=%d", sessionID, sequence)
+	}
+
+	downlink := append([]byte(nil), data...)
+	downlink[0] = 0x02
+	h.hub.BroadcastBinaryToGroup(session.GroupID, connection.ID, downlink)
+}
+
+func (h *Handler) releaseConnectionPTT(connection *Connection) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	for _, session := range h.ptt.ReleaseConnection(ctx, connection.ID) {
+		h.broadcastPTTStopped(session, "", "disconnect")
+	}
+}
+
+func (h *Handler) broadcastPTTStopped(session ptt.Session, requestID string, reason string) {
+	h.hub.BroadcastToGroup(session.GroupID, NewEvent("ptt.stopped", requestID, map[string]any{
+		"sessionId":     session.ID,
+		"groupId":       session.GroupID,
+		"speakerUserId": session.SpeakerUserID,
+		"reason":        reason,
+	}))
+}
+
+func binaryUUID(value []byte) string {
+	return fmt.Sprintf(
+		"%x-%x-%x-%x-%x",
+		value[0:4],
+		value[4:6],
+		value[6:8],
+		value[8:10],
+		value[10:16],
+	)
 }
 
 func (h *Handler) handleSOSCreate(c *gin.Context, connection *Connection, event Event) {

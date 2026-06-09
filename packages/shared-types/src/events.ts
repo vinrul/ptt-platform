@@ -103,6 +103,10 @@ export type PttStateEvent =
       }
     >;
 
+export type PttStartEvent = RealtimeEvent<"ptt.start", { groupId: string }>;
+
+export type PttStopEvent = RealtimeEvent<"ptt.stop", { sessionId: string }>;
+
 export type ErrorEvent = RealtimeEvent<
   "error",
   {
@@ -117,7 +121,9 @@ export type ClientRealtimeEvent =
   | GroupJoinEvent
   | GpsUpdateEvent
   | SosCreateEvent
-  | SosAckEvent;
+  | SosAckEvent
+  | PttStartEvent
+  | PttStopEvent;
 
 export type ServerRealtimeEvent =
   | ConnectionReadyEvent

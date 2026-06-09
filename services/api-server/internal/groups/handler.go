@@ -20,11 +20,18 @@ func NewHandler(service *Service) *Handler {
 }
 
 func (h *Handler) List(c *gin.Context) {
-	if _, ok := requireReadRole(c); !ok {
+	claims, err := auth.ClaimsFromContext(c)
+	if err != nil {
+		apiutil.Error(c, http.StatusUnauthorized, "unauthorized", "Authentication is required", nil)
 		return
 	}
 
-	items, err := h.service.List(c.Request.Context())
+	var items []Group
+	if claims.Role == "field_user" {
+		items, err = h.service.ListForUser(c.Request.Context(), claims.Subject)
+	} else {
+		items, err = h.service.List(c.Request.Context())
+	}
 	if err != nil {
 		apiutil.Error(c, http.StatusInternalServerError, "server_error", "Unable to list groups", nil)
 		return

@@ -22,10 +22,16 @@ type Connection struct {
 	LastHeartbeat time.Time
 
 	socket    *websocket.Conn
-	send      chan OutboundEvent
+	send      chan outboundMessage
 	done      chan struct{}
 	closeOnce sync.Once
 	mu        sync.RWMutex
+}
+
+type outboundMessage struct {
+	messageType int
+	event       *OutboundEvent
+	data        []byte
 }
 
 func newConnection(id string, identity Identity, socket *websocket.Conn) *Connection {
@@ -38,16 +44,31 @@ func newConnection(id string, identity Identity, socket *websocket.Conn) *Connec
 		JoinedGroups:  make(map[string]struct{}),
 		LastHeartbeat: now,
 		socket:        socket,
-		send:          make(chan OutboundEvent, 64),
+		send:          make(chan outboundMessage, 128),
 		done:          make(chan struct{}),
 	}
 }
 
 func (c *Connection) Send(event OutboundEvent) bool {
+	return c.enqueue(outboundMessage{
+		messageType: websocket.TextMessage,
+		event:       &event,
+	})
+}
+
+func (c *Connection) SendBinary(data []byte) bool {
+	copyData := append([]byte(nil), data...)
+	return c.enqueue(outboundMessage{
+		messageType: websocket.BinaryMessage,
+		data:        copyData,
+	})
+}
+
+func (c *Connection) enqueue(message outboundMessage) bool {
 	select {
 	case <-c.done:
 		return false
-	case c.send <- event:
+	case c.send <- message:
 		return true
 	default:
 		c.Close(websocket.ClosePolicyViolation, "client is too slow")
@@ -93,9 +114,15 @@ func (c *Connection) Close(code int, reason string) {
 func (c *Connection) writeLoop() {
 	for {
 		select {
-		case event := <-c.send:
+		case message := <-c.send:
 			_ = c.socket.SetWriteDeadline(time.Now().Add(writeTimeout))
-			if err := c.socket.WriteJSON(event); err != nil {
+			var err error
+			if message.messageType == websocket.BinaryMessage {
+				err = c.socket.WriteMessage(websocket.BinaryMessage, message.data)
+			} else {
+				err = c.socket.WriteJSON(message.event)
+			}
+			if err != nil {
 				c.Close(websocket.CloseGoingAway, "write failed")
 				return
 			}

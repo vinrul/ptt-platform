@@ -17,6 +17,9 @@ Fitur sampai Phase 9:
 - Peta otomatis fokus ke marker pertama dan menampilkan jumlah unit terlacak.
 - Alarm SOS visual dan bunyi singkat saat emergency aktif.
 - Marker SOS merah, auto-zoom ke lokasi, dan acknowledge dari dispatcher.
+- Admin workspace untuk user, group membership, device, dan audit log.
+- Super admin dapat mengelola semua user dan membership.
+- Dispatcher hanya dapat mengelola field user; supervisor bersifat read-only.
 
 ## Run Local
 

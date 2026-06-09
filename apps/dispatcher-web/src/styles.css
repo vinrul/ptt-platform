@@ -1,6 +1,40 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap");
 @import "tailwindcss";
 
+@layer components {
+  .admin-card {
+    @apply rounded-2xl border border-white/8 bg-[#101815] p-5 shadow-xl;
+  }
+
+  .admin-input {
+    @apply min-h-11 rounded-xl border border-stone-700 bg-black/20 px-3 py-2 text-sm text-stone-100 outline-none focus:border-emerald-400;
+  }
+
+  .admin-button {
+    @apply rounded-xl border border-white/10 px-3 py-2 text-xs font-bold uppercase tracking-wider text-stone-300 transition hover:bg-white/5;
+  }
+
+  .admin-primary {
+    @apply rounded-xl bg-emerald-300 px-4 py-2.5 text-xs font-black uppercase tracking-wider text-emerald-950 disabled:opacity-40;
+  }
+
+  .admin-table {
+    @apply w-full min-w-[680px] text-left text-sm;
+  }
+
+  .admin-table th {
+    @apply border-b border-white/10 px-3 py-3 text-[10px] uppercase tracking-wider text-stone-500;
+  }
+
+  .admin-table td {
+    @apply border-b border-white/5 px-3 py-3 text-stone-300;
+  }
+
+  .admin-table td span {
+    @apply mt-1 block text-xs text-stone-600;
+  }
+}
+
 @theme {
   --font-sans: "DM Sans", sans-serif;
   --font-display: "Space Grotesk", sans-serif;

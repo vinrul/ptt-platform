@@ -246,6 +246,10 @@ Response:
 }
 ```
 
+Role operator menerima seluruh grup. Role `field_user` hanya menerima grup yang
+terdaftar pada `group_members`, sehingga Android dapat memilih channel tanpa
+melihat grup lain.
+
 ### POST /api/groups
 
 Request:
@@ -311,16 +315,9 @@ Returns registered devices and last seen.
 
 Returns device detail.
 
-### PATCH /api/devices/:id
-
-Request:
-
-```json
-{
-  "deviceName": "Android Patrol 1",
-  "status": "active"
-}
-```
+Device management Phase 12 bersifat read-only untuk `super_admin`, `dispatcher`,
+dan `supervisor`. Device dibuat saat login dan `lastSeenAt` diperbarui saat
+refresh token berhasil.
 
 ## SOS
 
@@ -354,6 +351,12 @@ Response:
 Query:
 
 - `actorUserId`
+- `action`
+- `page`
+- `pageSize`
+
+Audit log bersifat read-only untuk seluruh role operator. Field user menerima
+`403`.
 - `action`
 - `from`
 - `to`

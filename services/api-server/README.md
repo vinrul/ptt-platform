@@ -18,6 +18,11 @@ Fitur yang tersedia:
 - Broadcast `gps.updated` terbatas ke role operator.
 - Create dan acknowledge SOS melalui WebSocket dengan audit log transaksional.
 - Broadcast `sos.created` dan `sos.acked` terbatas ke role operator.
+- Talk lock in-memory per grup dengan persistence metadata `talk_sessions`.
+- Relay frame Opus binary tanpa decode, terbatas ke koneksi yang join grup sama.
+- Disconnect speaker otomatis melepas talk lock.
+- Device registry read-only untuk operator.
+- Audit log list dengan filter actor/action dan pagination.
 
 ## Local Commands
 
@@ -62,6 +67,13 @@ Test package WebSocket membuka listener localhost sementara melalui
 11. Kirim `sos.create`, pastikan row `sos_events` dan audit `sos.create` dibuat.
 12. Ack dari dispatcher, lalu pastikan status menjadi `ack` dan audit `sos.ack`
     dibuat.
+13. Join dua client ke grup sama dan pastikan client kedua menerima `ptt.busy`
+    saat speaker pertama aktif.
+14. Kirim frame binary uplink dan pastikan listener menerima downlink dengan
+    frame type `0x02`.
+15. Login dari Android/web dan pastikan device muncul melalui `GET /api/devices`.
+16. Pastikan `GET /api/audit-logs` menampilkan aksi auth, user, group, SOS, dan
+    PTT sesuai role operator.
 
 Kontrak REST tersedia di `docs/API.md`; kontrak realtime tersedia di
 `docs/WEBSOCKET_PROTOCOL.md`.

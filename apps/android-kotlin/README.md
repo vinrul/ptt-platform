@@ -16,8 +16,12 @@ Fitur sampai Phase 9:
 - Tombol SOS dengan dialog konfirmasi mengirim `sos.create`.
 - SOS menyertakan koordinat terakhir jika tersedia dan tetap dapat dikirim tanpa
   GPS fix.
-- Permission audio, foreground service, notification, dan wake lock tetap belum
-  diminta/digunakan sebelum phase terkait.
+- Daftar channel hanya berisi grup yang ditugaskan kepada field user.
+- PTT hold-to-talk dengan talk lock server.
+- Capture `AudioRecord`, Opus mono 16 kHz/20 ms, dan playback `AudioTrack`.
+- Microphone baru aktif setelah server mengirim `ptt.granted`.
+- Permission foreground service, notification, dan wake lock tetap belum
+  digunakan sebelum patrol background phase.
 
 ## Server URL Local
 
@@ -90,6 +94,14 @@ ANDROID_APK=/path/to/app.apk bun run android:install
 9. Pastikan koordinat terbaru tampil di aplikasi dan diterima dispatcher.
 10. Tekan `Send SOS`, konfirmasi, dan pastikan status pengiriman muncul.
 11. Pastikan dispatcher menerima alarm serta lokasi terbaru jika tersedia.
+12. Login dua perangkat fisik dengan user berbeda dalam grup yang sama.
+13. Pilih channel yang sama lalu tahan PTT pada perangkat A.
+14. Pastikan perangkat B mendengar suara dan menerima status busy jika mencoba
+    bicara bersamaan.
+15. Lepaskan PTT A dan pastikan B dapat mengambil channel.
 
 Tracking Phase 9 berjalan saat activity aktif. Foreground patrol service untuk
 tracking background disiapkan pada phase Android patrol/PTT berikutnya.
+
+Android Emulator tidak cocok untuk acceptance test microphone end-to-end.
+Gunakan minimal dua perangkat fisik untuk pengujian suara.

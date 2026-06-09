@@ -1,0 +1,151 @@
+package id.nuwiarul.pttfleet.audio
+
+import android.annotation.SuppressLint
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.AudioTrack
+import android.media.MediaRecorder
+import io.github.jaredmdobson.concentus.OpusApplication
+import io.github.jaredmdobson.concentus.OpusDecoder
+import io.github.jaredmdobson.concentus.OpusEncoder
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+
+class PttAudioEngine(
+    private val onEncodedFrame: (ByteArray) -> Unit,
+    private val onError: (String) -> Unit,
+) {
+    private val capturing = AtomicBoolean(false)
+    private val playbackExecutor = Executors.newSingleThreadExecutor()
+    private var captureThread: Thread? = null
+    private var audioRecord: AudioRecord? = null
+    private var audioTrack: AudioTrack? = null
+    private val encoder = OpusEncoder(SAMPLE_RATE, CHANNELS, OpusApplication.OPUS_APPLICATION_VOIP).apply {
+        bitrate = BITRATE
+        complexity = 3
+        useVBR = true
+    }
+    private val decoder = OpusDecoder(SAMPLE_RATE, CHANNELS)
+
+    @SuppressLint("MissingPermission")
+    fun startCapture() {
+        if (!capturing.compareAndSet(false, true)) return
+
+        val minimumBuffer = AudioRecord.getMinBufferSize(
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        val recorder = AudioRecord(
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            maxOf(minimumBuffer, FRAME_SAMPLES * 8),
+        )
+        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+            capturing.set(false)
+            recorder.release()
+            onError("Unable to initialize microphone")
+            return
+        }
+
+        audioRecord = recorder
+        recorder.startRecording()
+        captureThread = Thread({
+            val pcm = ShortArray(FRAME_SAMPLES)
+            val encoded = ByteArray(MAX_OPUS_PACKET)
+            while (capturing.get()) {
+                var offset = 0
+                while (capturing.get() && offset < pcm.size) {
+                    val count = recorder.read(pcm, offset, pcm.size - offset)
+                    if (count <= 0) break
+                    offset += count
+                }
+                if (offset != pcm.size) continue
+                runCatching {
+                    val length = encoder.encode(pcm, 0, FRAME_SAMPLES, encoded, 0, encoded.size)
+                    onEncodedFrame(encoded.copyOf(length))
+                }.onFailure {
+                    onError(it.message ?: "Opus encoding failed")
+                    capturing.set(false)
+                }
+            }
+        }, "ptt-audio-capture").also { it.start() }
+    }
+
+    fun stopCapture() {
+        if (!capturing.compareAndSet(true, false)) return
+        runCatching { audioRecord?.stop() }
+        captureThread?.join(500)
+        captureThread = null
+        audioRecord?.release()
+        audioRecord = null
+    }
+
+    fun play(opusPayload: ByteArray) {
+        playbackExecutor.execute {
+            runCatching {
+                val pcm = ShortArray(FRAME_SAMPLES)
+                val samples = decoder.decode(
+                    opusPayload,
+                    0,
+                    opusPayload.size,
+                    pcm,
+                    0,
+                    FRAME_SAMPLES,
+                    false,
+                )
+                val track = audioTrack ?: createAudioTrack().also {
+                    audioTrack = it
+                    it.play()
+                }
+                track.write(pcm, 0, samples, AudioTrack.WRITE_BLOCKING)
+            }.onFailure {
+                onError(it.message ?: "Opus playback failed")
+            }
+        }
+    }
+
+    fun release() {
+        stopCapture()
+        playbackExecutor.shutdownNow()
+        audioTrack?.stop()
+        audioTrack?.release()
+        audioTrack = null
+    }
+
+    private fun createAudioTrack(): AudioTrack {
+        val minimumBuffer = AudioTrack.getMinBufferSize(
+            SAMPLE_RATE,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        return AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .build(),
+            )
+            .setBufferSizeInBytes(maxOf(minimumBuffer, FRAME_SAMPLES * 8))
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+    }
+
+    private companion object {
+        const val SAMPLE_RATE = 16_000
+        const val CHANNELS = 1
+        const val FRAME_SAMPLES = 320
+        const val BITRATE = 24_000
+        const val MAX_OPUS_PACKET = 1_276
+    }
+}

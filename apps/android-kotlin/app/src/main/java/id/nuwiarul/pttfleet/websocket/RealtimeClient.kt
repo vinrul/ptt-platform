@@ -5,11 +5,13 @@ import android.os.Looper
 import id.nuwiarul.pttfleet.auth.AuthSession
 import id.nuwiarul.pttfleet.auth.EndpointNormalizer
 import id.nuwiarul.pttfleet.location.GpsSample
+import id.nuwiarul.pttfleet.audio.AudioEnvelope
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
 import org.json.JSONObject
 import java.time.Instant
 import java.util.concurrent.Executors
@@ -27,6 +29,12 @@ interface RealtimeListener {
     fun onStatusChanged(status: ConnectionStatus)
     fun onReady(connectionId: String)
     fun onError(message: String)
+    fun onGroupJoined(groupId: String)
+    fun onPttGranted(sessionId: String, groupId: String)
+    fun onPttBusy(groupId: String, speakerUserId: String)
+    fun onPttStarted(sessionId: String, groupId: String, speakerUserId: String)
+    fun onPttStopped(sessionId: String, groupId: String, reason: String)
+    fun onAudioFrame(sessionId: String, sequence: Long, payload: ByteArray)
 }
 
 class RealtimeClient(
@@ -96,6 +104,38 @@ class RealtimeClient(
     }
 
     @Synchronized
+    fun joinGroup(groupId: String): Boolean = sendJson(
+        "group.join",
+        JSONObject().put("groupId", groupId),
+    )
+
+    @Synchronized
+    fun startPtt(groupId: String): Boolean = sendJson(
+        "ptt.start",
+        JSONObject().put("groupId", groupId),
+    )
+
+    @Synchronized
+    fun stopPtt(sessionId: String): Boolean = sendJson(
+        "ptt.stop",
+        JSONObject().put("sessionId", sessionId),
+    )
+
+    @Synchronized
+    fun sendAudio(sessionId: String, sequence: Long, opusPayload: ByteArray): Boolean {
+        return socket?.send(ByteString.of(*AudioEnvelope.encodeUplink(sessionId, sequence, opusPayload))) == true
+    }
+
+    private fun sendJson(type: String, payload: JSONObject): Boolean {
+        val event = JSONObject()
+            .put("type", type)
+            .put("requestId", "android-${System.currentTimeMillis()}")
+            .put("timestamp", Instant.now().toString())
+            .put("payload", payload)
+        return socket?.send(event.toString()) == true
+    }
+
+    @Synchronized
     private fun openSocket() {
         val activeSession = session ?: return
         if (stopped || socket != null) return
@@ -145,6 +185,42 @@ class RealtimeClient(
                     val connectionId = event.getJSONObject("payload").getString("connectionId")
                     mainHandler.post { listener.onReady(connectionId) }
                 }
+                "group.joined" -> {
+                    val groupId = event.getJSONObject("payload").getString("groupId")
+                    mainHandler.post { listener.onGroupJoined(groupId) }
+                }
+                "ptt.granted" -> {
+                    val payload = event.getJSONObject("payload")
+                    mainHandler.post {
+                        listener.onPttGranted(payload.getString("sessionId"), payload.getString("groupId"))
+                    }
+                }
+                "ptt.busy" -> {
+                    val payload = event.getJSONObject("payload")
+                    mainHandler.post {
+                        listener.onPttBusy(payload.getString("groupId"), payload.getString("speakerUserId"))
+                    }
+                }
+                "ptt.started" -> {
+                    val payload = event.getJSONObject("payload")
+                    mainHandler.post {
+                        listener.onPttStarted(
+                            payload.getString("sessionId"),
+                            payload.getString("groupId"),
+                            payload.getString("speakerUserId"),
+                        )
+                    }
+                }
+                "ptt.stopped" -> {
+                    val payload = event.getJSONObject("payload")
+                    mainHandler.post {
+                        listener.onPttStopped(
+                            payload.getString("sessionId"),
+                            payload.getString("groupId"),
+                            payload.getString("reason"),
+                        )
+                    }
+                }
                 "error" -> {
                     val message = event.getJSONObject("payload").optString("message", "Realtime error")
                     mainHandler.post { listener.onError(message) }
@@ -171,6 +247,13 @@ class RealtimeClient(
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             handleMessage(text)
+        }
+
+        override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+            val frame = AudioEnvelope.decodeDownlink(bytes.toByteArray()) ?: return
+            mainHandler.post {
+                listener.onAudioFrame(frame.sessionId, frame.sequence, frame.payload)
+            }
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {

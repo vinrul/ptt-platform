@@ -130,9 +130,11 @@ Handler realtime saat ini menerima:
 - `gps.update`
 - `sos.create`
 - `sos.ack` untuk role operator
+- `ptt.start`
+- `ptt.stop`
 
-Event PTT tetap menjadi bagian kontrak, tetapi handler-nya diaktifkan pada phase
-berikutnya.
+Audio Opus dikirim sebagai WebSocket binary setelah server mengirim
+`ptt.granted`.
 
 ## GPS
 
@@ -386,6 +388,11 @@ Server rules:
   allowed to monitor the group.
 - Server does not decode Opus in MVP.
 - Invalid session frame is dropped and logged.
+- Sequence yang tidak berurutan dicatat sebagai debug log.
+- Talk lock MVP disimpan in-memory sehingga deployment saat ini harus memakai
+  satu instance API server.
+- Disconnect koneksi speaker otomatis menghentikan session dengan reason
+  `disconnect`.
 
 ## Error Event
 

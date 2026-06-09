@@ -7,7 +7,7 @@ import { DispatcherMap } from "../features/map/DispatcherMap";
 import { UserList } from "../features/users/UserList";
 import { useRealtimeStore } from "../features/users/realtimeStore";
 
-export function DispatcherPage() {
+export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const session = useAuthStore((state) => state.session)!;
   const clearSession = useAuthStore((state) => state.clearSession);
   const users = useRealtimeStore((state) => state.users);
@@ -143,6 +143,15 @@ export function DispatcherPage() {
 
           <div className="flex items-center gap-3">
             <ConnectionBadge status={connectionStatus} />
+            {session.user.role !== "field_user" ? (
+              <button
+                className="rounded-xl border border-white/10 px-3 py-2 text-xs font-bold uppercase tracking-wider text-stone-300 transition hover:bg-white/5"
+                onClick={onOpenAdmin}
+                type="button"
+              >
+                Admin
+              </button>
+            ) : null}
             <button
               className="hidden rounded-xl border border-white/10 px-3 py-2 text-left transition hover:bg-white/5 sm:block"
               onClick={handleLogout}
