@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -52,6 +53,7 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 	if err != nil {
+		log.Printf("auth login failed to create session: %v", err)
 		apiutil.Error(c, http.StatusInternalServerError, "server_error", "Unable to create session", nil)
 		return
 	}
