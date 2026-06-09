@@ -119,6 +119,23 @@ Response:
 }
 ```
 
+Login dibatasi per kombinasi IP client dan username. Jika limit terlampaui:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+```
+
+```json
+{
+  "error": {
+    "code": "rate_limited",
+    "message": "Too many login attempts. Try again later",
+    "details": {}
+  }
+}
+```
+
 ### POST /api/auth/refresh
 
 Request:

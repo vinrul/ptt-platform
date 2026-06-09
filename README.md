@@ -26,6 +26,7 @@ lapangan, GPS tracking realtime, SOS event, dan dispatcher web berbasis peta.
 - `docs/ROADMAP.md` - milestone.
 - `docs/DEPLOYMENT.md` - deployment dan backup.
 - `docs/LOCAL_TESTING.md` - one-command stack, seed, dan smoke test.
+- `docs/SECURITY.md` - baseline keamanan dan checklist production.
 
 ## Perintah Local Target
 

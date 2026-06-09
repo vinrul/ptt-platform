@@ -1,3 +1,5 @@
+import { createServer } from "node:net";
+
 const root = import.meta.dir.replace(/\/scripts$/, "");
 const configuredJwtSecret = process.env.JWT_SECRET ?? "";
 const postgresUser = process.env.POSTGRES_USER ?? "ptt";
@@ -28,6 +30,9 @@ async function main() {
   if (!containerRuntime) {
     throw new Error("Docker or Podman is required for PostgreSQL and Redis.");
   }
+  await assertPortAvailable(8080, "API");
+  await assertPortAvailable(5173, "dispatcher");
+
   const compose = [containerRuntime, "compose", "-f", "infra/docker/docker-compose.local.yml"];
   await run([...compose, "up", "-d", "--remove-orphans", "postgres", "redis", "pgweb"]);
   await waitFor([
@@ -53,7 +58,10 @@ async function main() {
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 
-  await waitForHttp("http://localhost:8080/readyz");
+  await Promise.all([
+    waitForProcessHttp(api, "http://localhost:8080/readyz", "API"),
+    waitForProcessHttp(web, "http://localhost:5173", "dispatcher"),
+  ]);
   await run(["bun", "scripts/smoke-local.ts"]);
   console.log("\nLocal stack ready:");
   console.log("- Dispatcher: http://localhost:5173");
@@ -61,7 +69,7 @@ async function main() {
   console.log("- Pgweb:      http://localhost:8081");
   console.log("- Users: admin, dispatcher, field1, field2");
   console.log("- Password: ptt-local-123 (override with SEED_PASSWORD)");
-  console.log("\nPress Ctrl+C to stop API and web. Docker dependencies remain running.");
+  console.log(`\nPress Ctrl+C to stop API and web. ${containerRuntime} dependencies remain running.`);
 
   await Promise.all([api.exited, web.exited]);
 }
@@ -104,4 +112,29 @@ async function waitForHttp(url: string) {
     await Bun.sleep(500);
   }
   throw new Error(`Timed out waiting for ${url}`);
+}
+
+async function waitForProcessHttp(
+  process: ReturnType<typeof spawn>,
+  url: string,
+  name: string,
+) {
+  await Promise.race([
+    waitForHttp(url),
+    process.exited.then((exitCode) => {
+      throw new Error(`${name} exited before becoming ready (code ${exitCode})`);
+    }),
+  ]);
+}
+
+async function assertPortAvailable(port: number, name: string) {
+  await new Promise<void>((resolve, reject) => {
+    const server = createServer();
+    server.once("error", () => {
+      reject(new Error(`${name} port ${port} is already in use. Stop the existing process first.`));
+    });
+    server.listen(port, "0.0.0.0", () => {
+      server.close(() => resolve());
+    });
+  });
 }

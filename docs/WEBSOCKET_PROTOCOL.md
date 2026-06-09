@@ -15,6 +15,10 @@ Server juga memeriksa ulang bahwa user masih ada dan berstatus `active` sebelum
 melakukan upgrade. Role koneksi diambil dari database agar perubahan role segera
 berlaku pada koneksi baru.
 
+Browser wajib mengirim origin yang terdaftar dalam `CORS_ALLOWED_ORIGINS`.
+Handshake dari origin lain ditolak dengan HTTP `403`. Android native boleh
+terhubung tanpa header `Origin`.
+
 ## JSON Event Envelope
 
 Semua event JSON:

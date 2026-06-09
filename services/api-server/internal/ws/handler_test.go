@@ -178,6 +178,30 @@ func TestHandlerRejectsInvalidToken(t *testing.T) {
 	}
 }
 
+func TestHandlerRejectsUnknownOrigin(t *testing.T) {
+	server, manager, _ := newWebSocketTestServer(t, fakeAccessRepository{
+		identity: Identity{UserID: "user-1", Username: "field1", Role: "field_user"},
+	})
+	defer server.Close()
+
+	rawToken, err := manager.IssueAccessToken("user-1", "field1", "field_user")
+	if err != nil {
+		t.Fatalf("issue access token: %v", err)
+	}
+	headers := http.Header{}
+	headers.Set("Origin", "https://evil.example")
+	_, response, err := websocket.DefaultDialer.Dial(
+		websocketURL(server.URL)+"?token="+rawToken,
+		headers,
+	)
+	if err == nil {
+		t.Fatal("expected unknown origin dial to fail")
+	}
+	if response == nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %#v", response)
+	}
+}
+
 func TestHandlerSendsReadyBeforePresence(t *testing.T) {
 	server, manager, hub := newWebSocketTestServer(t, fakeAccessRepository{
 		identity: Identity{UserID: "dispatcher-1", Username: "dispatcher1", Role: "dispatcher"},
@@ -315,7 +339,7 @@ func newWebSocketTestServer(t *testing.T, repository AccessRepository) (*httptes
 	hub := NewHub()
 	handler := NewHandler(manager, repository, fakeGPSRecorder{
 		location: gps.Location{RecordedAt: time.Now().UTC().Format(time.RFC3339)},
-	}, fakeSOSService{}, ptt.NewManager(fakePTTRepository{}), hub)
+	}, fakeSOSService{}, ptt.NewManager(fakePTTRepository{}), hub, []string{"http://localhost:5173"})
 	router := gin.New()
 	router.GET("/ws", handler.Connect)
 
