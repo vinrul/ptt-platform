@@ -23,6 +23,10 @@ Jalankan:
 bun run local
 ```
 
+Port `8080` dan `5173` harus kosong. Script berhenti dengan pesan jelas jika
+API atau dispatcher lama masih berjalan, agar smoke test tidak menguji proses
+yang salah.
+
 Script akan:
 
 1. Memilih Docker atau Podman yang tersedia.

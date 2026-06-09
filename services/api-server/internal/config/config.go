@@ -3,8 +3,11 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -16,6 +19,10 @@ type Config struct {
 	JWTSecret           string
 	JWTAccessTTLMinutes int
 	JWTRefreshTTLHours  int
+	AllowedOrigins      []string
+	TrustedProxies      []string
+	LoginRateLimit      int
+	LoginRateWindow     time.Duration
 }
 
 func Load() (Config, error) {
@@ -29,6 +36,10 @@ func Load() (Config, error) {
 		JWTSecret:           getEnv("JWT_SECRET", defaultJWTSecret(appEnv)),
 		JWTAccessTTLMinutes: getEnvInt("JWT_ACCESS_TTL_MINUTES", 15),
 		JWTRefreshTTLHours:  getEnvInt("JWT_REFRESH_TTL_HOURS", 720),
+		AllowedOrigins:      getEnvList("CORS_ALLOWED_ORIGINS", defaultAllowedOrigins(appEnv)),
+		TrustedProxies:      getEnvList("TRUSTED_PROXIES", defaultTrustedProxies(appEnv)),
+		LoginRateLimit:      getEnvInt("LOGIN_RATE_LIMIT", 10),
+		LoginRateWindow:     time.Duration(getEnvInt("LOGIN_RATE_WINDOW_SECONDS", 60)) * time.Second,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -57,6 +68,40 @@ func (c Config) Validate() error {
 	if _, err := strconv.Atoi(c.APIPort); err != nil {
 		return fmt.Errorf("API_PORT must be numeric: %w", err)
 	}
+	if c.LoginRateLimit < 1 {
+		return errors.New("LOGIN_RATE_LIMIT must be at least 1")
+	}
+	if c.LoginRateWindow < time.Second {
+		return errors.New("LOGIN_RATE_WINDOW_SECONDS must be at least 1")
+	}
+	if c.AppEnv == "production" && len(c.AllowedOrigins) == 0 {
+		return errors.New("CORS_ALLOWED_ORIGINS is required in production")
+	}
+	if c.AppEnv == "production" && len(c.TrustedProxies) == 0 {
+		return errors.New("TRUSTED_PROXIES is required in production")
+	}
+	for _, origin := range c.AllowedOrigins {
+		parsed, err := url.Parse(origin)
+		if err != nil ||
+			(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+			parsed.Host == "" ||
+			parsed.Path != "" ||
+			parsed.RawQuery != "" ||
+			parsed.Fragment != "" ||
+			parsed.User != nil {
+			return fmt.Errorf("CORS_ALLOWED_ORIGINS contains invalid origin %q", origin)
+		}
+		if c.AppEnv == "production" && parsed.Scheme != "https" {
+			return fmt.Errorf("production origin must use https: %s", origin)
+		}
+	}
+	for _, proxy := range c.TrustedProxies {
+		if net.ParseIP(proxy) == nil {
+			if _, _, err := net.ParseCIDR(proxy); err != nil {
+				return fmt.Errorf("TRUSTED_PROXIES contains invalid IP or CIDR %q", proxy)
+			}
+		}
+	}
 	return nil
 }
 
@@ -79,6 +124,20 @@ func defaultJWTSecret(appEnv string) string {
 		return ""
 	}
 	return "local-development-jwt-secret-32-bytes"
+}
+
+func defaultAllowedOrigins(appEnv string) string {
+	if appEnv == "production" {
+		return ""
+	}
+	return "http://localhost:5173,http://127.0.0.1:5173"
+}
+
+func defaultTrustedProxies(appEnv string) string {
+	if appEnv == "production" {
+		return ""
+	}
+	return "127.0.0.1,::1"
 }
 
 func (c Config) Addr() string {
@@ -113,4 +172,20 @@ func getEnvInt(key string, fallback int) int {
 	}
 
 	return parsed
+}
+
+func getEnvList(key string, fallback string) []string {
+	value := getEnv(key, fallback)
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+
+	items := strings.Split(value, ",")
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			result = append(result, strings.TrimSuffix(trimmed, "/"))
+		}
+	}
+	return result
 }

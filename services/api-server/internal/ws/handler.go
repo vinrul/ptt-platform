@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -46,7 +47,13 @@ func NewHandler(
 	sosService SOSService,
 	pttManager *ptt.Manager,
 	hub *Hub,
+	allowedOrigins []string,
 ) *Handler {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		allowed[strings.TrimSuffix(origin, "/")] = struct{}{}
+	}
+
 	return &Handler{
 		tokens:     tokens,
 		repository: repository,
@@ -57,8 +64,13 @@ func NewHandler(
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
-			CheckOrigin: func(_ *http.Request) bool {
-				return true
+			CheckOrigin: func(request *http.Request) bool {
+				origin := strings.TrimSuffix(request.Header.Get("Origin"), "/")
+				if origin == "" {
+					return true
+				}
+				_, ok := allowed[origin]
+				return ok
 			},
 		},
 	}

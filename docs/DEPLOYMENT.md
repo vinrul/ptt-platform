@@ -147,11 +147,19 @@ REDIS_URL=redis://redis:6379
 JWT_SECRET=<32-byte-random-or-more>
 JWT_ACCESS_TTL_MINUTES=15
 JWT_REFRESH_TTL_HOURS=720
+CORS_ALLOWED_ORIGINS=https://ptt.example.com
+TRUSTED_PROXIES=172.16.0.0/12
+LOGIN_RATE_LIMIT=10
+LOGIN_RATE_WINDOW_SECONDS=60
 PUBLIC_API_URL=https://api.ptt.example.com
 PUBLIC_WS_URL=wss://api.ptt.example.com/ws
 ```
 
 Jangan commit `.env` production.
+
+`TRUSTED_PROXIES` harus disesuaikan dengan subnet network Docker pada server.
+Jangan gunakan `0.0.0.0/0`. Checklist keamanan lengkap tersedia di
+`docs/SECURITY.md`.
 
 ## Deployment Steps
 

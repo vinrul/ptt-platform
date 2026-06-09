@@ -28,7 +28,10 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	}
 
 	router := gin.New()
-	router.Use(gin.Logger(), gin.Recovery())
+	if err := router.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		panic(err)
+	}
+	router.Use(requestLogger(), gin.Recovery(), requireHTTPS(cfg.AppEnv), cors(cfg.AllowedOrigins))
 
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -74,12 +77,21 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 		sos.NewService(store),
 		ptt.NewManager(ptt.NewRepository(store)),
 		hub,
+		cfg.AllowedOrigins,
 	)
 
 	router.GET("/ws", websocketHandler.Connect)
 
 	authRoutes := api.Group("/auth")
-	authRoutes.POST("/login", authHandler.Login)
+	if store != nil && store.Redis != nil {
+		authRoutes.POST("/login", loginRateLimit(redisLoginRateLimiter{
+			client: store.Redis,
+			limit:  cfg.LoginRateLimit,
+			window: cfg.LoginRateWindow,
+		}, cfg.LoginRateWindow), authHandler.Login)
+	} else {
+		authRoutes.POST("/login", authHandler.Login)
+	}
 	authRoutes.POST("/refresh", authHandler.Refresh)
 
 	protected := api.Group("")

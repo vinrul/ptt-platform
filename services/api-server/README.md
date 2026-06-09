@@ -7,12 +7,15 @@ Fitur yang tersedia:
 - Health dan readiness check.
 - Goose migration runner.
 - Login JWT access token.
+- Redis-backed login rate limit.
 - Refresh token rotation dan logout revoke.
 - Protected `/api/auth/me`.
 - User CRUD dengan soft delete.
 - Group CRUD dan membership.
 - Role authorization untuk super admin, dispatcher, supervisor, dan field user.
 - WebSocket `/ws?token=<jwt>` dengan JWT dan active-user validation.
+- CORS dan WebSocket origin allowlist.
+- HTTPS guard untuk production di belakang trusted reverse proxy.
 - Connection registry, presence per user, heartbeat timeout, dan group join.
 - Validasi dan persistence `gps.update` ke PostgreSQL.
 - Broadcast `gps.updated` terbatas ke role operator.
