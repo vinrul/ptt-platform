@@ -1,12 +1,18 @@
+import { join } from "node:path";
+
+const isWindows = process.platform === "win32";
 const sdkRoot =
   process.env.ANDROID_HOME ??
   process.env.ANDROID_SDK_ROOT ??
-  `${process.env.HOME}/Library/Android/sdk`;
+  (isWindows
+    ? join(process.env.LOCALAPPDATA ?? "", "Android", "Sdk")
+    : join(process.env.HOME ?? "", "Library", "Android", "sdk"));
 
-const emulator = `${sdkRoot}/emulator/emulator`;
-const adb = `${sdkRoot}/platform-tools/adb`;
-const avdName = process.env.ANDROID_AVD ?? "Medium_Phone_API_36.1";
+const emulator = join(sdkRoot, "emulator", isWindows ? "emulator.exe" : "emulator");
+const adb = join(sdkRoot, "platform-tools", isWindows ? "adb.exe" : "adb");
+const preferredAvdName = process.env.ANDROID_AVD ?? "Medium_Phone_API_36.1";
 const apkPath =
+  Bun.argv[3] ??
   process.env.ANDROID_APK ??
   "apps/android-kotlin/app/build/outputs/apk/debug/app-debug.apk";
 const packageName = "id.nuwiarul.pttfleet";
@@ -51,8 +57,21 @@ async function startEmulator() {
   await ensureFile(emulator);
 
   const avds = await output(emulator, ["-list-avds"]);
-  if (!avds.split(/\r?\n/).includes(avdName)) {
-    throw new Error(`Android AVD "${avdName}" not found. Available AVDs:\n${avds}`);
+  const availableAvds = avds.split(/\r?\n/).filter(Boolean);
+  const avdName = availableAvds.includes(preferredAvdName)
+    ? preferredAvdName
+    : process.env.ANDROID_AVD
+      ? undefined
+      : availableAvds[0];
+
+  if (!avdName) {
+    throw new Error(
+      `Android AVD "${preferredAvdName}" not found. Available AVDs:\n${avds || "(none)"}`,
+    );
+  }
+
+  if (avdName !== preferredAvdName) {
+    console.log(`AVD "${preferredAvdName}" not found; using "${avdName}".`);
   }
 
   console.log(`Starting Android emulator: ${avdName}`);

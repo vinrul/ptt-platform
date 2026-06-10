@@ -1,10 +1,16 @@
 package id.nuwiarul.pttfleet
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import android.widget.ArrayAdapter
 import androidx.appcompat.app.AlertDialog
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,6 +21,7 @@ import id.nuwiarul.pttfleet.auth.AuthRepository
 import id.nuwiarul.pttfleet.auth.AuthSession
 import id.nuwiarul.pttfleet.auth.SecureTokenStore
 import id.nuwiarul.pttfleet.audio.PttAudioEngine
+import id.nuwiarul.pttfleet.audio.AudioRouting
 import id.nuwiarul.pttfleet.databinding.ActivityMainBinding
 import id.nuwiarul.pttfleet.groups.GroupRepository
 import id.nuwiarul.pttfleet.groups.GroupSummary
@@ -28,6 +35,11 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity(), RealtimeListener {
+    companion object {
+        var isVisible = false
+            private set
+    }
+
     private lateinit var binding: ActivityMainBinding
     private lateinit var tokenStore: SecureTokenStore
     private val httpClient = OkHttpClient.Builder()
@@ -37,15 +49,16 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         .build()
     private val authRepository = AuthRepository(httpClient)
     private val groupRepository = GroupRepository(httpClient)
-    private var realtimeClient: RealtimeClient? = null
+    private val realtimeClient = RealtimeClient.getInstance()
     private lateinit var audioEngine: PttAudioEngine
-    private lateinit var locationTracker: LocationTracker
     private var latestLocation: GpsSample? = null
     private var groups: List<GroupSummary> = emptyList()
     private var joinedGroupId: String? = null
     private var activePttSessionId: String? = null
     private var audioSequence = 0L
+    private var receivedAudioFrames = 0L
     private var pttHeld = false
+    private var updatingTrackingSwitch = false
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { permissions ->
@@ -64,34 +77,81 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             if (granted) R.string.ptt_hold_again else R.string.audio_permission_denied,
         )
     }
+    private val backgroundLocationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {}
+    private val startupPermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { permissions ->
+        val recordAudioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
+        val locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+
+        if (locationGranted) {
+            startTracking()
+        } else {
+            binding.locationStatusText.setText(R.string.location_permission_denied)
+        }
+
+        if (recordAudioGranted) {
+            binding.pttStatusText.setText(R.string.ptt_ready)
+        } else {
+            binding.pttStatusText.setText(R.string.audio_permission_denied)
+        }
+
+        requestBatteryOptimizationExemption()
+        requestBackgroundLocationPermission()
+        requestSystemAlertWindowPermission()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent?.getBooleanExtra("is_wakeup", false) == true) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+            } else {
+                @Suppress("DEPRECATION")
+                window.addFlags(
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
+                )
+            }
+        }
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
         tokenStore = SecureTokenStore(applicationContext)
-        locationTracker = LocationTracker(
-            applicationContext,
-            ::handleLocation,
-        ) { message -> binding.locationStatusText.text = message }
         audioEngine = PttAudioEngine(
             onEncodedFrame = { payload ->
                 activePttSessionId?.let { sessionId ->
-                    realtimeClient?.sendAudio(sessionId, audioSequence++, payload)
+                    realtimeClient.sendAudio(sessionId, audioSequence++, payload)
+                }
+            },
+            onPlayedFrame = { samples ->
+                runOnUiThread {
+                    binding.pttStatusText.text = getString(R.string.ptt_playing, samples)
                 }
             },
             onError = { message -> runOnUiThread { binding.pttStatusText.text = message } },
         )
         binding.loginButton.setOnClickListener { login() }
         binding.logoutButton.setOnClickListener { logout() }
-        binding.locationToggleButton.setOnClickListener { toggleTracking() }
+        binding.locationTrackingSwitch.setOnCheckedChangeListener { _, checked ->
+            if (updatingTrackingSwitch) return@setOnCheckedChangeListener
+            if (checked) {
+                enableTrackingFromSwitch()
+            } else {
+                stopTracking()
+            }
+        }
         binding.sosButton.setOnClickListener { confirmSos() }
         binding.groupSpinner.onItemSelectedListener = GroupSelectionListener { position ->
             groups.getOrNull(position)?.let { group ->
                 joinedGroupId = null
                 binding.pttButton.isEnabled = false
-                realtimeClient?.joinGroup(group.id)
+                realtimeClient.joinGroup(group.id)
+                PatrolService.joinGroup(applicationContext, group.id)
             }
         }
         binding.pttButton.setOnTouchListener { _, motionEvent ->
@@ -113,11 +173,53 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         tokenStore.load()?.let { showSession(it) } ?: showLogin()
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        isVisible = true
+        realtimeClient.addListener(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (PatrolService.isTrackingActive) {
+            setTrackingSwitchChecked(true)
+            val latest = PatrolService.latestLocation
+            if (latest != null) {
+                handleLocation(latest)
+            } else {
+                binding.locationStatusText.setText(R.string.location_waiting)
+            }
+        } else {
+            setTrackingSwitchChecked(false)
+            binding.locationStatusText.setText(R.string.location_stopped)
+        }
+
+        PatrolService.onLocationChangedListener = { sample ->
+            runOnUiThread {
+                handleLocation(sample)
+            }
+        }
+    }
+
+    override fun onPause() {
+        PatrolService.onLocationChangedListener = null
+        super.onPause()
+    }
+
+    override fun onStop() {
+        realtimeClient.removeListener(this)
+        isVisible = false
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        AudioRouting.setSpeakerphoneOn(applicationContext, false)
         audioEngine.release()
-        locationTracker.stop()
-        realtimeClient?.disconnect()
-        realtimeClient = null
         super.onDestroy()
     }
 
@@ -158,13 +260,28 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         )
         binding.connectionDetailText.setText(R.string.realtime_opening)
 
-        realtimeClient?.disconnect()
-        realtimeClient = RealtimeClient(httpClient, this).also { it.connect(session) }
+        realtimeClient.connect(session)
+
+        val isWakeup = intent?.getBooleanExtra("is_wakeup", false) == true
+        if (!isWakeup) {
+            requestStartupPermissions()
+        }
+
+        PatrolService.start(applicationContext)
         loadGroups(session)
+
+        // Fetch and upload Firebase Cloud Messaging token for background PTT wakeups
+        com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                val token = task.result
+                if (!token.isNullOrBlank()) {
+                    id.nuwiarul.pttfleet.fcm.MyFirebaseMessagingService.uploadToken(applicationContext, token)
+                }
+            }
+        }
     }
 
     private fun showLogin() {
-        stopTracking()
         binding.loginPanel.visibility = View.VISIBLE
         binding.sessionPanel.visibility = View.GONE
         binding.loginError.visibility = View.GONE
@@ -175,9 +292,9 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
 
     private fun logout() {
         stopPtt()
-        stopTracking()
-        realtimeClient?.disconnect()
-        realtimeClient = null
+        PatrolService.stopTracking(applicationContext)
+        realtimeClient.disconnect()
+        PatrolService.stop(applicationContext)
         tokenStore.clear()
         binding.passwordInput.text?.clear()
         showLogin()
@@ -215,22 +332,18 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             return
         }
         binding.pttStatusText.setText(R.string.ptt_requesting)
-        realtimeClient?.startPtt(groupId)
+        realtimeClient.startPtt(groupId)
     }
 
     private fun stopPtt() {
         audioEngine.stopCapture()
-        activePttSessionId?.let { realtimeClient?.stopPtt(it) }
+        activePttSessionId?.let { realtimeClient.stopPtt(it) }
         activePttSessionId = null
         audioSequence = 0
+        AudioRouting.setSpeakerphoneOn(applicationContext, false)
     }
 
-    private fun toggleTracking() {
-        if (locationTracker.isTracking()) {
-            stopTracking()
-            return
-        }
-
+    private fun enableTrackingFromSwitch() {
         val hasFine = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -242,6 +355,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         if (hasFine || hasCoarse) {
             startTracking()
         } else {
+            setTrackingSwitchChecked(false)
             locationPermissionLauncher.launch(
                 arrayOf(
                     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -252,26 +366,27 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun startTracking() {
-        locationTracker.start()
-        binding.locationToggleButton.setText(R.string.stop_tracking)
+        PatrolService.startTracking(applicationContext)
+        setTrackingSwitchChecked(true)
         binding.locationStatusText.setText(R.string.location_waiting)
     }
 
     private fun stopTracking() {
-        if (::locationTracker.isInitialized) {
-            locationTracker.stop()
-        }
-        if (::binding.isInitialized) {
-            binding.locationToggleButton.setText(R.string.start_tracking)
-            binding.locationStatusText.setText(R.string.location_stopped)
-        }
+        PatrolService.stopTracking(applicationContext)
+        setTrackingSwitchChecked(false)
+        binding.locationStatusText.setText(R.string.location_stopped)
+    }
+
+    private fun setTrackingSwitchChecked(checked: Boolean) {
+        updatingTrackingSwitch = true
+        binding.locationTrackingSwitch.isChecked = checked
+        updatingTrackingSwitch = false
     }
 
     private fun handleLocation(sample: GpsSample) {
         latestLocation = sample
-        val sent = realtimeClient?.sendGps(sample) == true
         binding.locationStatusText.text = getString(
-            if (sent) R.string.location_sent else R.string.location_not_sent,
+            R.string.location_sent,
             sample.lat,
             sample.lng,
         )
@@ -287,7 +402,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun sendSos() {
-        val sent = realtimeClient?.sendSos(latestLocation) == true
+        val sent = realtimeClient.sendSos(latestLocation) == true
         binding.sosStatusText.setText(if (sent) R.string.sos_sent else R.string.sos_not_sent)
     }
 
@@ -319,7 +434,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
 
     override fun onReady(connectionId: String) {
         binding.connectionDetailText.text = getString(R.string.realtime_ready, connectionId.take(8))
-        groups.firstOrNull()?.let { realtimeClient?.joinGroup(it.id) }
+        groups.firstOrNull()?.let { realtimeClient.joinGroup(it.id) }
     }
 
     override fun onError(message: String) {
@@ -334,12 +449,13 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
 
     override fun onPttGranted(sessionId: String, groupId: String) {
         if (!pttHeld || joinedGroupId != groupId) {
-            realtimeClient?.stopPtt(sessionId)
+            realtimeClient.stopPtt(sessionId)
             return
         }
         activePttSessionId = sessionId
         audioSequence = 0
         binding.pttStatusText.setText(R.string.ptt_transmitting)
+        AudioRouting.setSpeakerphoneOn(applicationContext, true)
         audioEngine.startCapture()
     }
 
@@ -350,7 +466,9 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
 
     override fun onPttStarted(sessionId: String, groupId: String, speakerUserId: String) {
         if (sessionId != activePttSessionId) {
+            receivedAudioFrames = 0
             binding.pttStatusText.setText(R.string.ptt_receiving)
+            AudioRouting.setSpeakerphoneOn(applicationContext, true)
         }
     }
 
@@ -360,11 +478,99 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             activePttSessionId = null
         }
         binding.pttStatusText.setText(R.string.ptt_ready)
+        AudioRouting.setSpeakerphoneOn(applicationContext, false)
     }
 
     override fun onAudioFrame(sessionId: String, sequence: Long, payload: ByteArray) {
         if (sessionId != activePttSessionId) {
+            receivedAudioFrames += 1
+            binding.pttStatusText.text = getString(
+                R.string.ptt_receiving_frame,
+                receivedAudioFrames,
+                payload.size,
+            )
+            AudioRouting.setSpeakerphoneOn(applicationContext, true)
             audioEngine.play(payload)
+        }
+    }
+
+    private fun requestStartupPermissions() {
+        val permissions = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        startupPermissionsLauncher.launch(permissions.toTypedArray())
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        val powerManager = getSystemService(PowerManager::class.java)
+        if (powerManager.isIgnoringBatteryOptimizations(packageName)) return
+        runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }
+    }
+
+    private fun requestBackgroundLocationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        if (
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+
+        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+            backgroundLocationPermissionLauncher.launch(
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+            )
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.background_location_permission_title)
+            .setMessage(R.string.background_location_permission_message)
+            .setPositiveButton(R.string.enable_permission) { _, _ ->
+                runCatching {
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                }
+            }
+            .setNegativeButton(R.string.try_later, null)
+            .show()
+    }
+
+    private fun requestSystemAlertWindowPermission() {
+        if (!Settings.canDrawOverlays(this)) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.permission_draw_overlays_title)
+                .setMessage(R.string.permission_draw_overlays_message)
+                .setPositiveButton(R.string.allow) { _, _ ->
+                    runCatching {
+                        startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:$packageName")
+                            )
+                        )
+                    }
+                }
+                .setNegativeButton(R.string.deny, null)
+                .show()
         }
     }
 }

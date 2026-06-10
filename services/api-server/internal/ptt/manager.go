@@ -17,6 +17,7 @@ type Session struct {
 	ID                string
 	GroupID           string
 	SpeakerUserID     string
+	TargetUserID      string
 	OwnerConnectionID string
 	StartedAt         time.Time
 	LastSequence      uint64
@@ -48,6 +49,7 @@ func (m *Manager) Start(
 	groupID string,
 	speakerUserID string,
 	connectionID string,
+	targetUserID string,
 ) (Session, *Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -62,6 +64,7 @@ func (m *Manager) Start(
 		return Session{}, nil, err
 	}
 	session.OwnerConnectionID = connectionID
+	session.TargetUserID = targetUserID
 	stored := session
 	m.byGroup[groupID] = &stored
 	m.byID[session.ID] = &stored

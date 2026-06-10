@@ -14,7 +14,9 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONObject
 import java.time.Instant
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
@@ -37,12 +39,15 @@ interface RealtimeListener {
     fun onAudioFrame(sessionId: String, sequence: Long, payload: ByteArray)
 }
 
-class RealtimeClient(
-    private val httpClient: OkHttpClient,
-    private val listener: RealtimeListener,
-) {
+class RealtimeClient private constructor() {
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .pingInterval(30, TimeUnit.SECONDS)
+        .build()
+
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val scheduler = Executors.newSingleThreadScheduledExecutor()
+    private var scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private var socket: WebSocket? = null
     private var reconnectFuture: ScheduledFuture<*>? = null
     private var heartbeatFuture: ScheduledFuture<*>? = null
@@ -50,11 +55,53 @@ class RealtimeClient(
     private var reconnectAttempt = 0
     private var stopped = true
 
+    private val listeners = CopyOnWriteArrayList<RealtimeListener>()
+
+    var status: ConnectionStatus = ConnectionStatus.IDLE
+        private set
+
+    companion object {
+        @Volatile
+        private var instance: RealtimeClient? = null
+
+        fun getInstance(): RealtimeClient {
+            return instance ?: synchronized(this) {
+                instance ?: RealtimeClient().also { instance = it }
+            }
+        }
+    }
+
+    fun addListener(listener: RealtimeListener) {
+        if (!listeners.contains(listener)) {
+            listeners.add(listener)
+        }
+        listener.onStatusChanged(status)
+    }
+
+    fun removeListener(listener: RealtimeListener) {
+        listeners.remove(listener)
+    }
+
     @Synchronized
-    fun connect(session: AuthSession) {
+    fun connect(session: AuthSession, force: Boolean = false) {
         this.session = session
         stopped = false
-        openSocket()
+        if (scheduler.isShutdown) {
+            scheduler = Executors.newSingleThreadScheduledExecutor()
+        }
+
+        if (force || socket == null) {
+            reconnectFuture?.cancel(false)
+            reconnectFuture = null
+
+            if (force) {
+                socket?.close(1000, "Forced reconnect")
+                socket = null
+                reconnectAttempt = 0
+            }
+
+            openSocket()
+        }
     }
 
     @Synchronized
@@ -183,56 +230,75 @@ class RealtimeClient(
             when (event.getString("type")) {
                 "connection.ready" -> {
                     val connectionId = event.getJSONObject("payload").getString("connectionId")
-                    mainHandler.post { listener.onReady(connectionId) }
+                    mainHandler.post {
+                        listeners.forEach { it.onReady(connectionId) }
+                    }
                 }
                 "group.joined" -> {
                     val groupId = event.getJSONObject("payload").getString("groupId")
-                    mainHandler.post { listener.onGroupJoined(groupId) }
+                    mainHandler.post {
+                        listeners.forEach { it.onGroupJoined(groupId) }
+                    }
                 }
                 "ptt.granted" -> {
                     val payload = event.getJSONObject("payload")
                     mainHandler.post {
-                        listener.onPttGranted(payload.getString("sessionId"), payload.getString("groupId"))
+                        listeners.forEach {
+                            it.onPttGranted(payload.getString("sessionId"), payload.getString("groupId"))
+                        }
                     }
                 }
                 "ptt.busy" -> {
                     val payload = event.getJSONObject("payload")
                     mainHandler.post {
-                        listener.onPttBusy(payload.getString("groupId"), payload.getString("speakerUserId"))
+                        listeners.forEach {
+                            it.onPttBusy(payload.getString("groupId"), payload.getString("speakerUserId"))
+                        }
                     }
                 }
                 "ptt.started" -> {
                     val payload = event.getJSONObject("payload")
                     mainHandler.post {
-                        listener.onPttStarted(
-                            payload.getString("sessionId"),
-                            payload.getString("groupId"),
-                            payload.getString("speakerUserId"),
-                        )
+                        listeners.forEach {
+                            it.onPttStarted(
+                                payload.getString("sessionId"),
+                                payload.getString("groupId"),
+                                payload.getString("speakerUserId"),
+                            )
+                        }
                     }
                 }
                 "ptt.stopped" -> {
                     val payload = event.getJSONObject("payload")
                     mainHandler.post {
-                        listener.onPttStopped(
-                            payload.getString("sessionId"),
-                            payload.getString("groupId"),
-                            payload.getString("reason"),
-                        )
+                        listeners.forEach {
+                            it.onPttStopped(
+                                payload.getString("sessionId"),
+                                payload.getString("groupId"),
+                                payload.getString("reason"),
+                            )
+                        }
                     }
                 }
                 "error" -> {
                     val message = event.getJSONObject("payload").optString("message", "Realtime error")
-                    mainHandler.post { listener.onError(message) }
+                    mainHandler.post {
+                        listeners.forEach { it.onError(message) }
+                    }
                 }
             }
         }.onFailure {
-            mainHandler.post { listener.onError("Received malformed realtime event") }
+            mainHandler.post {
+                listeners.forEach { it.onError("Received malformed realtime event") }
+            }
         }
     }
 
-    private fun postStatus(status: ConnectionStatus) {
-        mainHandler.post { listener.onStatusChanged(status) }
+    private fun postStatus(newStatus: ConnectionStatus) {
+        this.status = newStatus
+        mainHandler.post {
+            listeners.forEach { it.onStatusChanged(newStatus) }
+        }
     }
 
     private inner class SocketListener : WebSocketListener() {
@@ -252,7 +318,9 @@ class RealtimeClient(
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
             val frame = AudioEnvelope.decodeDownlink(bytes.toByteArray()) ?: return
             mainHandler.post {
-                listener.onAudioFrame(frame.sessionId, frame.sequence, frame.payload)
+                listeners.forEach {
+                    it.onAudioFrame(frame.sessionId, frame.sequence, frame.payload)
+                }
             }
         }
 
@@ -276,7 +344,9 @@ class RealtimeClient(
                 heartbeatFuture = null
                 scheduleReconnect()
             }
-            mainHandler.post { listener.onError(error.message ?: "Realtime connection failed") }
+            mainHandler.post {
+                listeners.forEach { it.onError(error.message ?: "Realtime connection failed") }
+            }
         }
     }
 }

@@ -12,34 +12,36 @@ import (
 )
 
 type Config struct {
-	AppEnv              string
-	APIPort             string
-	DatabaseURL         string
-	RedisURL            string
-	JWTSecret           string
-	JWTAccessTTLMinutes int
-	JWTRefreshTTLHours  int
-	AllowedOrigins      []string
-	TrustedProxies      []string
-	LoginRateLimit      int
-	LoginRateWindow     time.Duration
+	AppEnv                  string
+	APIPort                 string
+	DatabaseURL             string
+	RedisURL                string
+	JWTSecret               string
+	JWTAccessTTLMinutes     int
+	JWTRefreshTTLHours      int
+	AllowedOrigins          []string
+	TrustedProxies          []string
+	LoginRateLimit          int
+	LoginRateWindow         time.Duration
+	FirebaseCredentialsPath string
 }
 
 func Load() (Config, error) {
 	appEnv := getEnv("APP_ENV", "local")
 
 	cfg := Config{
-		AppEnv:              appEnv,
-		APIPort:             getEnv("API_PORT", "8080"),
-		DatabaseURL:         getEnv("DATABASE_URL", defaultDatabaseURL(appEnv)),
-		RedisURL:            getEnv("REDIS_URL", defaultRedisURL(appEnv)),
-		JWTSecret:           getEnv("JWT_SECRET", defaultJWTSecret(appEnv)),
-		JWTAccessTTLMinutes: getEnvInt("JWT_ACCESS_TTL_MINUTES", 15),
-		JWTRefreshTTLHours:  getEnvInt("JWT_REFRESH_TTL_HOURS", 720),
-		AllowedOrigins:      getEnvList("CORS_ALLOWED_ORIGINS", defaultAllowedOrigins(appEnv)),
-		TrustedProxies:      getEnvList("TRUSTED_PROXIES", defaultTrustedProxies(appEnv)),
-		LoginRateLimit:      getEnvInt("LOGIN_RATE_LIMIT", 10),
-		LoginRateWindow:     time.Duration(getEnvInt("LOGIN_RATE_WINDOW_SECONDS", 60)) * time.Second,
+		AppEnv:                  appEnv,
+		APIPort:                 getEnv("API_PORT", "8080"),
+		DatabaseURL:             getEnv("DATABASE_URL", defaultDatabaseURL(appEnv)),
+		RedisURL:                getEnv("REDIS_URL", defaultRedisURL(appEnv)),
+		JWTSecret:               getEnv("JWT_SECRET", defaultJWTSecret(appEnv)),
+		JWTAccessTTLMinutes:     getEnvInt("JWT_ACCESS_TTL_MINUTES", 15),
+		JWTRefreshTTLHours:      getEnvInt("JWT_REFRESH_TTL_HOURS", 720),
+		AllowedOrigins:          getEnvList("CORS_ALLOWED_ORIGINS", defaultAllowedOrigins(appEnv)),
+		TrustedProxies:          getEnvList("TRUSTED_PROXIES", defaultTrustedProxies(appEnv)),
+		LoginRateLimit:          getEnvInt("LOGIN_RATE_LIMIT", 10),
+		LoginRateWindow:         time.Duration(getEnvInt("LOGIN_RATE_WINDOW_SECONDS", 60)) * time.Second,
+		FirebaseCredentialsPath: getEnv("FIREBASE_CREDENTIALS_PATH", ""),
 	}
 
 	if err := cfg.Validate(); err != nil {

@@ -19,6 +19,7 @@ Fitur sampai Phase 9:
 - Daftar channel hanya berisi grup yang ditugaskan kepada field user.
 - PTT hold-to-talk dengan talk lock server.
 - Capture `AudioRecord`, Opus mono 16 kHz/20 ms, dan playback `AudioTrack`.
+- Playback PTT memakai loudspeaker/media volume dengan gain suara terbatas.
 - Microphone baru aktif setelah server mengirim `ptt.granted`.
 - Permission foreground service, notification, dan wake lock tetap belum
   digunakan sebelum patrol background phase.
@@ -28,7 +29,22 @@ Fitur sampai Phase 9:
 Android emulator memakai:
 
 ```text
-http://10.0.2.2:8080
+http://100.82.105.93:8080
+
+Setelah login, aplikasi menjalankan foreground service `PTT Fleet patrol active`.
+Service ini mempertahankan WebSocket, join channel terakhir, dan playback suara
+ketika layar mati, aplikasi diminimalkan, atau Activity ditutup. Gunakan aksi
+`Stop` pada notifikasi atau tombol logout untuk menghentikannya.
+
+Pada beberapa perangkat, nonaktifkan battery optimization untuk PTT Fleet agar
+vendor Android tidak membunuh foreground service ketika layar mati. Menekan
+`Force stop` dari Settings tetap menghentikan seluruh service sampai aplikasi
+dibuka kembali.
+
+FCM `ptt_wakeup` akan menghidupkan service, menyambungkan ulang WebSocket,
+bergabung ke `groupId` dari payload, meminta satu lokasi terbaru, lalu mengirim
+`gps.update`. Layar dibangunkan sekitar 8 detik. Android dapat menolak membuka
+Activity otomatis dari background, tetapi wake lock dan notifikasi tetap aktif.
 ```
 
 Perangkat fisik harus memakai IP LAN komputer development, misalnya:
@@ -44,12 +60,64 @@ HTTPS/WSS.
 
 Project membutuhkan JDK 17 dan Android SDK 35.
 
+Build dari root repository di Windows atau macOS:
+
+```bash
+bun run android:build:debug
+bun run android:build:release
+```
+
+Build debug menjalankan unit test dan menghasilkan APK debug. Build release
+menjalankan lint, membuat APK unsigned, lalu menandatanganinya memakai Android
+debug keystore lokal agar dapat dipasang untuk pengujian:
+
+```text
+apps/android-kotlin/app/build/outputs/apk/debug/app-debug.apk
+apps/android-kotlin/app/build/outputs/apk/release/app-release-unsigned.apk
+apps/android-kotlin/app/build/outputs/apk/release/app-release-local.apk
+```
+
+Install release lokal ke emulator atau perangkat yang terhubung:
+
+```bash
+bun run android:install:release
+bun run android:run:release
+```
+
+`android:run:release` menyalakan emulator jika belum ada device aktif, lalu
+memasang dan membuka aplikasi. `android:install:release` digunakan ketika
+emulator atau perangkat fisik sudah terhubung ke ADB.
+
+`app-release-local.apk` memakai debug keystore lokal dan bukan untuk distribusi
+production. Release production harus ditandatangani dengan keystore production.
+Keystore dan password production tidak boleh disimpan di repository.
+
+Perintah Gradle manual untuk macOS:
+
 ```bash
 export JAVA_HOME=/path/to/jdk-17
 export ANDROID_HOME=$HOME/Library/Android/sdk
 ./gradlew testDebugUnitTest
 ./gradlew assembleDebug
 ./gradlew lintDebug
+```
+
+Windows PowerShell:
+
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Java\jdk-17"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+Set-Location apps/android-kotlin
+.\gradlew.bat testDebugUnitTest
+.\gradlew.bat assembleDebug
+.\gradlew.bat lintDebug
+```
+
+`local.properties` bersifat lokal dan diabaikan Git. Jika Android SDK tidak
+terdeteksi otomatis, buat file tersebut tanpa mengubah konfigurasi macOS:
+
+```properties
+sdk.dir=C\:\\Users\\YOUR_USER\\AppData\\Local\\Android\\Sdk
 ```
 
 APK debug:
@@ -80,6 +148,17 @@ AVD atau APK dapat dioverride:
 ANDROID_AVD=My_AVD bun run android:run
 ANDROID_APK=/path/to/app.apk bun run android:install
 ```
+
+Windows PowerShell memakai sintaks environment variable berikut:
+
+```powershell
+$env:ANDROID_AVD = "Pixel_6a"
+bun run android:run
+```
+
+Script memilih AVD pertama yang tersedia jika AVD default macOS tidak ditemukan.
+Konfigurasi AVD tersimpan lokal di masing-masing komputer dan tidak di-commit,
+sehingga AVD Windows dan macOS dapat memakai nama berbeda.
 
 ## Manual Test Notes
 

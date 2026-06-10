@@ -11,6 +11,7 @@ import (
 	"ptt-fleet/services/api-server/internal/config"
 	"ptt-fleet/services/api-server/internal/db"
 	"ptt-fleet/services/api-server/internal/devices"
+	"ptt-fleet/services/api-server/internal/firebase"
 	"ptt-fleet/services/api-server/internal/gps"
 	"ptt-fleet/services/api-server/internal/groups"
 	"ptt-fleet/services/api-server/internal/ptt"
@@ -70,6 +71,10 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	groupHandler := groups.NewHandler(groups.NewService(store))
 	deviceHandler := devices.NewHandler(devices.NewService(store))
 	auditHandler := audit.NewHandler(audit.NewService(store))
+	firebaseClient, err := firebase.NewClient(cfg.FirebaseCredentialsPath)
+	if err != nil {
+		panic(err)
+	}
 	websocketHandler := realtime.NewHandler(
 		tokenManager,
 		realtime.NewRepository(store),
@@ -77,6 +82,7 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 		sos.NewService(store),
 		ptt.NewManager(ptt.NewRepository(store)),
 		hub,
+		firebaseClient,
 		cfg.AllowedOrigins,
 	)
 
@@ -114,6 +120,7 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	protected.DELETE("/groups/:id/members/:userId", groupHandler.RemoveMember)
 	protected.GET("/devices", deviceHandler.List)
 	protected.GET("/devices/:id", deviceHandler.Get)
+	protected.PUT("/devices/:id/push-token", deviceHandler.UpdatePushToken)
 	protected.GET("/audit-logs", auditHandler.List)
 
 	return router

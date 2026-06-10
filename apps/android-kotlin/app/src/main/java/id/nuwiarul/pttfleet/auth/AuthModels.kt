@@ -12,5 +12,6 @@ data class AuthSession(
     val serverUrl: String,
     val accessToken: String,
     val refreshToken: String,
+    val deviceId: String,
     val user: AuthUser,
 )

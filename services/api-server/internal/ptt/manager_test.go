@@ -30,11 +30,11 @@ func TestManagerEnforcesGroupLockAndSequence(t *testing.T) {
 	repository := &fakeRepository{}
 	manager := NewManager(repository)
 
-	session, _, err := manager.Start(context.Background(), "group-1", "user-1", "connection-1")
+	session, _, err := manager.Start(context.Background(), "group-1", "user-1", "connection-1", "")
 	if err != nil {
 		t.Fatalf("start session: %v", err)
 	}
-	_, busy, err := manager.Start(context.Background(), "group-1", "user-2", "connection-2")
+	_, busy, err := manager.Start(context.Background(), "group-1", "user-2", "connection-2", "")
 	if err != ErrBusy || busy == nil || busy.SpeakerUserID != "user-1" {
 		t.Fatalf("expected busy session, got busy=%#v err=%v", busy, err)
 	}
@@ -55,7 +55,7 @@ func TestManagerEnforcesGroupLockAndSequence(t *testing.T) {
 func TestManagerReleasesSessionOnDisconnect(t *testing.T) {
 	repository := &fakeRepository{}
 	manager := NewManager(repository)
-	_, _, err := manager.Start(context.Background(), "group-1", "user-1", "connection-1")
+	_, _, err := manager.Start(context.Background(), "group-1", "user-1", "connection-1", "")
 	if err != nil {
 		t.Fatalf("start session: %v", err)
 	}

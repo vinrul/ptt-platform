@@ -133,6 +133,60 @@ func (h *Hub) BroadcastBinaryToGroup(groupID string, senderConnectionID string, 
 	}
 }
 
+func (h *Hub) BroadcastBinaryToUserInGroup(
+	groupID string,
+	userID string,
+	senderConnectionID string,
+	data []byte,
+) {
+	h.mu.RLock()
+	recipients := make([]*Connection, 0)
+	for _, connection := range h.connections {
+		if connection.ID != senderConnectionID &&
+			connection.UserID == userID &&
+			connection.HasJoinedGroup(groupID) {
+			recipients = append(recipients, connection)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, connection := range recipients {
+		connection.SendBinary(data)
+	}
+}
+
+func (h *Hub) UserHasJoinedGroup(userID string, groupID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, connection := range h.connections {
+		if connection.UserID == userID && connection.HasJoinedGroup(groupID) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Hub) BroadcastDirectPTT(
+	groupID string,
+	speakerUserID string,
+	targetUserID string,
+	event OutboundEvent,
+) {
+	h.mu.RLock()
+	recipients := make([]*Connection, 0)
+	for _, connection := range h.connections {
+		if (connection.UserID == speakerUserID || connection.UserID == targetUserID) &&
+			connection.HasJoinedGroup(groupID) {
+			recipients = append(recipients, connection)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, connection := range recipients {
+		connection.Send(event)
+	}
+}
+
 func (h *Hub) broadcastPresence(userID string, status string) {
 	event := NewEvent("presence.updated", "", map[string]any{
 		"userId":     userID,

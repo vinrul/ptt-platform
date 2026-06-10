@@ -6,7 +6,7 @@
     <string name="server_url">Server URL</string>
     <string name="username">Username</string>
     <string name="password">Password</string>
-    <string name="default_server_url">http://10.0.2.2:8080</string>
+    <string name="default_server_url">http://100.82.105.93:8080</string>
     <string name="login">Connect</string>
     <string name="connecting">Connecting…</string>
     <string name="logout">Logout</string>
@@ -23,6 +23,7 @@
     <string name="login_failed">Login failed.</string>
     <string name="start_tracking">Start GPS tracking</string>
     <string name="stop_tracking">Stop GPS tracking</string>
+    <string name="gps_tracking">GPS</string>
     <string name="location_stopped">GPS tracking is stopped.</string>
     <string name="location_waiting">Waiting for a location fix…</string>
     <string name="location_permission_denied">Location permission was denied.</string>
@@ -43,7 +44,30 @@
     <string name="ptt_requesting">Requesting channel…</string>
     <string name="ptt_transmitting">Transmitting voice…</string>
     <string name="ptt_receiving">Receiving voice…</string>
+    <string name="ptt_receiving_frame">Receiving voice · frame %1$d · %2$d bytes</string>
+    <string name="ptt_playing">Playing voice · %1$d samples</string>
     <string name="ptt_busy">Channel busy · another user is talking.</string>
     <string name="ptt_hold_again">Microphone ready · hold PTT again.</string>
     <string name="audio_permission_denied">Microphone permission was denied.</string>
+    <string name="background_channel_name">Patrol connection</string>
+    <string name="background_channel_description">Keeps PTT voice reception connected while the app is in the background.</string>
+    <string name="background_notification_title">PTT Fleet patrol active</string>
+    <string name="background_connecting">Connecting to dispatcher…</string>
+    <string name="background_connected">Connected · waiting for channel</string>
+    <string name="background_reconnecting">Connection lost · reconnecting…</string>
+    <string name="background_offline">Patrol connection is offline</string>
+    <string name="background_channel_ready">Channel ready · listening in background</string>
+    <string name="background_receiving">Receiving PTT voice…</string>
+    <string name="background_playing">Playing PTT voice · %1$d samples</string>
+    <string name="background_location_sent">Wakeup location sent to dispatcher</string>
+    <string name="background_location_permission_required">PTT wakeup active · enable Allow all the time location for GPS</string>
+    <string name="background_location_permission_title">Enable background location</string>
+    <string name="background_location_permission_message">For sending a fresh position after an FCM wakeup, open Permissions → Location and choose Allow all the time.</string>
+    <string name="enable_permission">Enable permission</string>
+    <string name="try_later">Try later</string>
+    <string name="background_stop">Stop</string>
+    <string name="permission_draw_overlays_title">Allow Display Over Other Apps</string>
+    <string name="permission_draw_overlays_message">To automatically open the app when a PTT call is received in the background, please grant the permission to display over other apps.</string>
+    <string name="allow">Allow</string>
+    <string name="deny">Deny</string>
 </resources>

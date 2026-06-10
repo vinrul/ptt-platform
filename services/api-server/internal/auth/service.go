@@ -30,6 +30,7 @@ type User struct {
 type Session struct {
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"refreshToken"`
+	DeviceID     string `json:"deviceId"`
 	User         User   `json:"user"`
 }
 
@@ -112,6 +113,7 @@ func (s *Service) Login(ctx context.Context, username string, password string, d
 	return Session{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
+		DeviceID:     deviceID,
 		User:         user,
 	}, nil
 }
@@ -182,6 +184,7 @@ func (s *Service) Refresh(ctx context.Context, currentToken string) (Session, er
 	return Session{
 		AccessToken:  accessToken,
 		RefreshToken: nextToken,
+		DeviceID:     nullableString(deviceID),
 		User:         user,
 	}, nil
 }

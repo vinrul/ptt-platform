@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class PttAudioEngine(
     private val onEncodedFrame: (ByteArray) -> Unit,
+    private val onPlayedFrame: (Int) -> Unit,
     private val onError: (String) -> Unit,
 ) {
     private val capturing = AtomicBoolean(false)
@@ -21,25 +22,26 @@ class PttAudioEngine(
     private var captureThread: Thread? = null
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
-    private val encoder = OpusEncoder(SAMPLE_RATE, CHANNELS, OpusApplication.OPUS_APPLICATION_VOIP).apply {
-        bitrate = BITRATE
-        complexity = 3
-        useVBR = true
-    }
-    private val decoder = OpusDecoder(SAMPLE_RATE, CHANNELS)
+    private val encoder =
+        OpusEncoder(CAPTURE_SAMPLE_RATE, CHANNELS, OpusApplication.OPUS_APPLICATION_VOIP).apply {
+            bitrate = BITRATE
+            complexity = 3
+            useVBR = true
+        }
+    private val decoder = OpusDecoder(PLAYBACK_SAMPLE_RATE, CHANNELS)
 
     @SuppressLint("MissingPermission")
     fun startCapture() {
         if (!capturing.compareAndSet(false, true)) return
 
         val minimumBuffer = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE,
+            CAPTURE_SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
         val recorder = AudioRecord(
             MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            SAMPLE_RATE,
+            CAPTURE_SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
             maxOf(minimumBuffer, FRAME_SAMPLES * 8),
@@ -87,23 +89,27 @@ class PttAudioEngine(
     fun play(opusPayload: ByteArray) {
         playbackExecutor.execute {
             runCatching {
-                val pcm = ShortArray(FRAME_SAMPLES)
+                val pcm = ShortArray(MAX_DECODE_SAMPLES)
                 val samples = decoder.decode(
                     opusPayload,
                     0,
                     opusPayload.size,
                     pcm,
                     0,
-                    FRAME_SAMPLES,
+                    MAX_DECODE_SAMPLES,
                     false,
                 )
+                PcmGain.apply(pcm, samples, PLAYBACK_GAIN)
                 val track = audioTrack ?: createAudioTrack().also {
                     audioTrack = it
+                    it.setVolume(1f)
                     it.play()
                 }
-                track.write(pcm, 0, samples, AudioTrack.WRITE_BLOCKING)
+                val written = track.write(pcm, 0, samples, AudioTrack.WRITE_BLOCKING)
+                check(written >= 0) { "AudioTrack write failed with code $written" }
+                onPlayedFrame(written)
             }.onFailure {
-                onError(it.message ?: "Opus playback failed")
+                onError("Opus playback failed (${opusPayload.size} bytes): ${it.message ?: "decode error"}")
             }
         }
     }
@@ -118,7 +124,7 @@ class PttAudioEngine(
 
     private fun createAudioTrack(): AudioTrack {
         val minimumBuffer = AudioTrack.getMinBufferSize(
-            SAMPLE_RATE,
+            PLAYBACK_SAMPLE_RATE,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
@@ -131,7 +137,7 @@ class PttAudioEngine(
             )
             .setAudioFormat(
                 AudioFormat.Builder()
-                    .setSampleRate(SAMPLE_RATE)
+                    .setSampleRate(PLAYBACK_SAMPLE_RATE)
                     .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                     .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                     .build(),
@@ -142,10 +148,13 @@ class PttAudioEngine(
     }
 
     private companion object {
-        const val SAMPLE_RATE = 16_000
+        const val CAPTURE_SAMPLE_RATE = 16_000
+        const val PLAYBACK_SAMPLE_RATE = 48_000
         const val CHANNELS = 1
-        const val FRAME_SAMPLES = 320
+        const val FRAME_SAMPLES = CAPTURE_SAMPLE_RATE * 20 / 1_000
+        const val MAX_DECODE_SAMPLES = PLAYBACK_SAMPLE_RATE * 120 / 1_000
         const val BITRATE = 24_000
         const val MAX_OPUS_PACKET = 1_276
+        const val PLAYBACK_GAIN = 1.8f
     }
 }

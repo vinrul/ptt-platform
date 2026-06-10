@@ -5,6 +5,7 @@ export type RealtimeStatus = "idle" | "connecting" | "connected" | "reconnecting
 interface RealtimeClientOptions {
   accessToken: string;
   onEvent: (event: ServerRealtimeEvent) => void;
+  onBinary?: (data: ArrayBuffer) => void;
   onStatus: (status: RealtimeStatus) => void;
 }
 
@@ -30,15 +31,24 @@ export class RealtimeClient {
 
     this.options.onStatus(this.reconnectAttempt === 0 ? "connecting" : "reconnecting");
     const socket = new WebSocket(buildWebSocketUrl(this.options.accessToken));
+    socket.binaryType = "arraybuffer";
     this.socket = socket;
 
     socket.addEventListener("open", () => {
+      if (this.stopped) {
+        socket.close(1000, "dispatcher cleanup");
+        return;
+      }
       this.reconnectAttempt = 0;
       this.options.onStatus("connected");
       this.startHeartbeat();
     });
 
     socket.addEventListener("message", (message) => {
+      if (message.data instanceof ArrayBuffer) {
+        this.options.onBinary?.(message.data);
+        return;
+      }
       if (typeof message.data !== "string") {
         return;
       }
@@ -65,8 +75,9 @@ export class RealtimeClient {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.socket?.close(1000, "dispatcher logout");
-    this.socket = null;
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.close(1000, "dispatcher logout");
+    }
     this.options.onStatus("idle");
   }
 
@@ -75,6 +86,14 @@ export class RealtimeClient {
       return false;
     }
     this.socket.send(JSON.stringify(event));
+    return true;
+  }
+
+  sendBinary(data: ArrayBuffer): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    this.socket.send(data);
     return true;
   }
 

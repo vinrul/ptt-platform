@@ -48,6 +48,7 @@ class AuthRepository(
             serverUrl = serverUrl,
             accessToken = root.getString("accessToken"),
             refreshToken = root.getString("refreshToken"),
+            deviceId = root.optString("deviceId", ""),
             user = AuthUser(
                 id = user.getString("id"),
                 username = user.getString("username"),

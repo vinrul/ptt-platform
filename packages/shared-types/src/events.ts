@@ -90,20 +90,27 @@ export type SosAckedEvent = RealtimeEvent<
 >;
 
 export type PttStateEvent =
-  | RealtimeEvent<"ptt.granted", { sessionId: string; groupId: string }>
+  | RealtimeEvent<"ptt.granted", { sessionId: string; groupId: string; targetUserId?: string }>
   | RealtimeEvent<"ptt.busy", { groupId: string; speakerUserId: string }>
-  | RealtimeEvent<"ptt.started", { sessionId: string; groupId: string; speakerUserId: string }>
+  | RealtimeEvent<
+      "ptt.started",
+      { sessionId: string; groupId: string; speakerUserId: string; targetUserId?: string }
+    >
   | RealtimeEvent<
       "ptt.stopped",
       {
         sessionId: string;
         groupId: string;
         speakerUserId: string;
+        targetUserId?: string;
         reason: "user_stop" | "disconnect" | "timeout" | "server_error";
       }
     >;
 
-export type PttStartEvent = RealtimeEvent<"ptt.start", { groupId: string }>;
+export type PttStartEvent = RealtimeEvent<
+  "ptt.start",
+  { groupId: string; targetUserId?: string }
+>;
 
 export type PttStopEvent = RealtimeEvent<"ptt.stop", { sessionId: string }>;
 

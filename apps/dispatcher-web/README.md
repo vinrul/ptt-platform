@@ -20,6 +20,9 @@ Fitur sampai Phase 9:
 - Admin workspace untuk user, group membership, device, dan audit log.
 - Super admin dapat mengelola semua user dan membership.
 - Dispatcher hanya dapat mengelola field user; supervisor bersifat read-only.
+- Monitor audio Opus untuk channel aktif.
+- Hold-to-talk browser untuk broadcast ke channel aktif.
+- Direct talk dari dispatcher ke satu field user yang online di channel.
 
 ## Run Local
 
@@ -49,3 +52,8 @@ bun --filter dispatcher-web build
 
 Browser dapat membatasi bunyi alarm sebelum ada interaksi user. Login dispatcher
 menjadi interaksi awal yang biasanya mengizinkan alarm berikutnya.
+
+Klik `Monitor on` sebelum mendengarkan audio. Monitor memakai decoder Opus
+WebAssembly dan dapat berjalan melalui HTTP lokal. Microphone browser memakai
+WebCodecs dan memerlukan Chrome/Edge terbaru. Akses microphone melalui alamat
+jaringan memerlukan HTTPS; HTTP hanya diizinkan browser untuk `localhost`.

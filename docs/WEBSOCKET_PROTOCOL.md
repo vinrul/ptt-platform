@@ -275,6 +275,25 @@ Speaker starts talk:
 }
 ```
 
+Dispatcher dapat memilih satu user dalam grup yang sama untuk direct talk:
+
+```json
+{
+  "type": "ptt.start",
+  "requestId": "req-ptt-direct-1",
+  "timestamp": "2026-06-08T12:00:00Z",
+  "payload": {
+    "groupId": "uuid",
+    "targetUserId": "uuid"
+  }
+}
+```
+
+Tanpa `targetUserId`, audio dibroadcast ke semua koneksi yang join grup. Dengan
+`targetUserId`, hanya role operator yang boleh memulai dan target harus online
+serta sudah join grup tersebut. Talk lock tetap berlaku per grup. Event control
+dan audio direct hanya dikirim ke speaker dan target.
+
 Server grants:
 
 ```json
@@ -284,7 +303,8 @@ Server grants:
   "timestamp": "2026-06-08T12:00:00Z",
   "payload": {
     "sessionId": "uuid",
-    "groupId": "uuid"
+    "groupId": "uuid",
+    "targetUserId": "optional-uuid"
   }
 }
 ```
@@ -298,7 +318,8 @@ Server broadcasts:
   "payload": {
     "sessionId": "uuid",
     "groupId": "uuid",
-    "speakerUserId": "uuid"
+    "speakerUserId": "uuid",
+    "targetUserId": "optional-uuid"
   }
 }
 ```
@@ -390,6 +411,10 @@ Server rules:
 - Server rewrites frame type from `0x01` to `0x02` before forwarding.
 - Server forwards only to group listeners and dispatcher listeners that are
   allowed to monitor the group.
+- Direct PTT forwards only to the selected target user in the joined group.
+- Dispatcher browser memakai decoder Opus WebAssembly untuk monitor sehingga
+  playback dapat berjalan melalui HTTP lokal. Uplink microphone memakai
+  WebCodecs dan memerlukan HTTPS atau `localhost`.
 - Server does not decode Opus in MVP.
 - Invalid session frame is dropped and logged.
 - Sequence yang tidak berurutan dicatat sebagai debug log.

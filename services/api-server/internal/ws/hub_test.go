@@ -46,6 +46,25 @@ func TestConnectionTracksJoinedGroups(t *testing.T) {
 	}
 }
 
+func TestHubFindsUserJoinedToGroup(t *testing.T) {
+	hub := NewHub()
+	connection := newConnection(
+		"connection-1",
+		Identity{UserID: "user-1", Username: "field1", Role: "field_user"},
+		nil,
+	)
+	connection.JoinGroup("group-1")
+	hub.Register(connection)
+	defer hub.Unregister(connection)
+
+	if !hub.UserHasJoinedGroup("user-1", "group-1") {
+		t.Fatal("expected online user to be found in joined group")
+	}
+	if hub.UserHasJoinedGroup("user-2", "group-1") {
+		t.Fatal("did not expect unrelated user in joined group")
+	}
+}
+
 func TestHeartbeatWindowIsNinetySeconds(t *testing.T) {
 	if HeartbeatWindow().Seconds() != 90 {
 		t.Fatalf("expected 90 second heartbeat window, got %s", HeartbeatWindow())

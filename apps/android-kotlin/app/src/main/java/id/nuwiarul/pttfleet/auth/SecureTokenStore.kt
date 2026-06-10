@@ -20,6 +20,7 @@ class SecureTokenStore(context: Context) {
             .put("serverUrl", session.serverUrl)
             .put("accessToken", session.accessToken)
             .put("refreshToken", session.refreshToken)
+            .put("deviceId", session.deviceId)
             .put(
                 "user",
                 JSONObject()
@@ -63,6 +64,7 @@ class SecureTokenStore(context: Context) {
                 serverUrl = json.getString("serverUrl"),
                 accessToken = json.getString("accessToken"),
                 refreshToken = json.getString("refreshToken"),
+                deviceId = json.optString("deviceId", ""),
                 user = AuthUser(
                     id = user.getString("id"),
                     username = user.getString("username"),

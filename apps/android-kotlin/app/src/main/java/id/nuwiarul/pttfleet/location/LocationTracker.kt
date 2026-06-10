@@ -9,6 +9,7 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 
 class LocationTracker(
     context: Context,
@@ -45,6 +46,29 @@ class LocationTracker(
     }
 
     fun isTracking(): Boolean = tracking
+
+    @SuppressLint("MissingPermission")
+    fun requestCurrentLocation(onResult: (GpsSample) -> Unit) {
+        val cancellation = CancellationTokenSource()
+        client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellation.token)
+            .addOnSuccessListener { location ->
+                if (location != null) {
+                    onResult(location.toGpsSample())
+                } else {
+                    client.lastLocation
+                        .addOnSuccessListener { cached ->
+                            if (cached != null) onResult(cached.toGpsSample())
+                            else onError("Unable to obtain current location after FCM wakeup")
+                        }
+                        .addOnFailureListener {
+                            onError(it.message ?: "Unable to obtain last location")
+                        }
+                }
+            }
+            .addOnFailureListener {
+                onError(it.message ?: "Unable to obtain current location")
+            }
+    }
 
     private fun Location.toGpsSample() = GpsSample(
         lat = latitude,

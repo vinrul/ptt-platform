@@ -11,6 +11,7 @@
   "dependencies": {
     "@ptt-fleet/shared-types": "workspace:*",
     "maptalks": "^1.12.1",
+    "opus-decoder": "^0.7.11",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "zustand": "^5.0.14"

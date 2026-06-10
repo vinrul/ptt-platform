@@ -16,6 +16,7 @@ import (
 
 	"ptt-fleet/services/api-server/internal/apiutil"
 	"ptt-fleet/services/api-server/internal/auth"
+	"ptt-fleet/services/api-server/internal/firebase"
 	"ptt-fleet/services/api-server/internal/gps"
 	"ptt-fleet/services/api-server/internal/ptt"
 	"ptt-fleet/services/api-server/internal/sos"
@@ -37,6 +38,7 @@ type Handler struct {
 	sos        SOSService
 	ptt        *ptt.Manager
 	hub        *Hub
+	firebase   *firebase.Client
 	upgrader   websocket.Upgrader
 }
 
@@ -47,6 +49,7 @@ func NewHandler(
 	sosService SOSService,
 	pttManager *ptt.Manager,
 	hub *Hub,
+	firebaseClient *firebase.Client,
 	allowedOrigins []string,
 ) *Handler {
 	allowed := make(map[string]struct{}, len(allowedOrigins))
@@ -61,6 +64,7 @@ func NewHandler(
 		sos:        sosService,
 		ptt:        pttManager,
 		hub:        hub,
+		firebase:   firebaseClient,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -178,7 +182,8 @@ func (h *Handler) readLoop(c *gin.Context, connection *Connection) {
 
 func (h *Handler) handlePTTStart(c *gin.Context, connection *Connection, event Event) {
 	var payload struct {
-		GroupID string `json:"groupId"`
+		GroupID      string `json:"groupId"`
+		TargetUserID string `json:"targetUserId"`
 	}
 	if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.GroupID == "" {
 		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "groupId is required", nil))
@@ -188,12 +193,27 @@ func (h *Handler) handlePTTStart(c *gin.Context, connection *Connection, event E
 		connection.Send(NewErrorEvent(event.RequestID, "group_not_joined", "Join the group before starting PTT", nil))
 		return
 	}
+	if payload.TargetUserID != "" {
+		if !isOperatorRole(connection.Role) {
+			connection.Send(NewErrorEvent(event.RequestID, "forbidden", "Only operators can start direct PTT", nil))
+			return
+		}
+		if payload.TargetUserID == connection.UserID {
+			connection.Send(NewErrorEvent(event.RequestID, "validation_error", "targetUserId must be another user", nil))
+			return
+		}
+		if !h.hub.UserHasJoinedGroup(payload.TargetUserID, payload.GroupID) {
+			connection.Send(NewErrorEvent(event.RequestID, "target_offline", "Target user is not online in this group", nil))
+			return
+		}
+	}
 
 	session, busy, err := h.ptt.Start(
 		c.Request.Context(),
 		payload.GroupID,
 		connection.UserID,
 		connection.ID,
+		payload.TargetUserID,
 	)
 	if errors.Is(err, ptt.ErrBusy) {
 		connection.Send(NewEvent("ptt.busy", event.RequestID, map[string]any{
@@ -208,14 +228,51 @@ func (h *Handler) handlePTTStart(c *gin.Context, connection *Connection, event E
 	}
 
 	connection.Send(NewEvent("ptt.granted", event.RequestID, map[string]any{
-		"sessionId": session.ID,
-		"groupId":   session.GroupID,
+		"sessionId":    session.ID,
+		"groupId":      session.GroupID,
+		"targetUserId": emptyToNil(session.TargetUserID),
 	}))
-	h.hub.BroadcastToGroup(session.GroupID, NewEvent("ptt.started", "", map[string]any{
+	started := NewEvent("ptt.started", "", map[string]any{
 		"sessionId":     session.ID,
 		"groupId":       session.GroupID,
 		"speakerUserId": session.SpeakerUserID,
-	}))
+		"targetUserId":  emptyToNil(session.TargetUserID),
+	})
+	if session.TargetUserID != "" {
+		h.hub.BroadcastDirectPTT(session.GroupID, session.SpeakerUserID, session.TargetUserID, started)
+	} else {
+		h.hub.BroadcastToGroup(session.GroupID, started)
+	}
+
+	h.triggerFcmPttWakeup(session.GroupID, session.SpeakerUserID, session.ID)
+}
+
+func (h *Handler) triggerFcmPttWakeup(groupID string, speakerUserID string, sessionID string) {
+	if h.firebase == nil {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		targets, err := h.repository.GetOfflineGroupMembersPushTokens(ctx, groupID, speakerUserID)
+		if err != nil {
+			log.Printf("[Firebase] Error fetching push targets for group %s: %v", groupID, err)
+			return
+		}
+
+		for _, target := range targets {
+			if !h.hub.UserHasJoinedGroup(target.UserID, groupID) {
+				err := h.firebase.SendPttWakeup(ctx, target.PushToken, groupID, sessionID)
+				if err != nil {
+					log.Printf("[Firebase] Error sending PTT wakeup to user %s (token: %s): %v", target.UserID, target.PushToken, err)
+				} else {
+					log.Printf("[Firebase] Successfully sent PTT wakeup push to user %s", target.UserID)
+				}
+			}
+		}
+	}()
 }
 
 func (h *Handler) handlePTTStop(c *gin.Context, connection *Connection, event Event) {
@@ -262,7 +319,11 @@ func (h *Handler) handleAudioFrame(connection *Connection, data []byte) {
 
 	downlink := append([]byte(nil), data...)
 	downlink[0] = 0x02
-	h.hub.BroadcastBinaryToGroup(session.GroupID, connection.ID, downlink)
+	if session.TargetUserID != "" {
+		h.hub.BroadcastBinaryToUserInGroup(session.GroupID, session.TargetUserID, connection.ID, downlink)
+	} else {
+		h.hub.BroadcastBinaryToGroup(session.GroupID, connection.ID, downlink)
+	}
 }
 
 func (h *Handler) releaseConnectionPTT(connection *Connection) {
@@ -274,12 +335,18 @@ func (h *Handler) releaseConnectionPTT(connection *Connection) {
 }
 
 func (h *Handler) broadcastPTTStopped(session ptt.Session, requestID string, reason string) {
-	h.hub.BroadcastToGroup(session.GroupID, NewEvent("ptt.stopped", requestID, map[string]any{
+	stopped := NewEvent("ptt.stopped", requestID, map[string]any{
 		"sessionId":     session.ID,
 		"groupId":       session.GroupID,
 		"speakerUserId": session.SpeakerUserID,
+		"targetUserId":  emptyToNil(session.TargetUserID),
 		"reason":        reason,
-	}))
+	})
+	if session.TargetUserID != "" {
+		h.hub.BroadcastDirectPTT(session.GroupID, session.SpeakerUserID, session.TargetUserID, stopped)
+	} else {
+		h.hub.BroadcastToGroup(session.GroupID, stopped)
+	}
 }
 
 func binaryUUID(value []byte) string {
@@ -291,6 +358,13 @@ func binaryUUID(value []byte) string {
 		value[8:10],
 		value[10:16],
 	)
+}
+
+func emptyToNil(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (h *Handler) handleSOSCreate(c *gin.Context, connection *Connection, event Event) {

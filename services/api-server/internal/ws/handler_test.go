@@ -159,8 +159,91 @@ func TestHandlerRelaysPTTAudioWithinJoinedGroup(t *testing.T) {
 	}
 }
 
+func TestHandlerRelaysDirectPTTOnlyToTargetUser(t *testing.T) {
+	server, manager, hub := newWebSocketTestServer(t, fakeAccessRepository{
+		identities: map[string]Identity{
+			"dispatcher-1": {UserID: "dispatcher-1", Username: "dispatcher", Role: "dispatcher"},
+			"user-1":       {UserID: "user-1", Username: "field1", Role: "field_user"},
+			"user-2":       {UserID: "user-2", Username: "field2", Role: "field_user"},
+		},
+	})
+	defer server.Close()
+	defer hub.CloseAll()
+
+	target := dialTestConnection(t, server.URL, manager, "user-1", "field1", "field_user")
+	defer target.Close()
+	bystander := dialTestConnection(t, server.URL, manager, "user-2", "field2", "field_user")
+	defer bystander.Close()
+	dispatcher := dialTestConnection(t, server.URL, manager, "dispatcher-1", "dispatcher", "dispatcher")
+	defer dispatcher.Close()
+
+	_ = readEvent(t, target)
+	_ = readEvent(t, bystander)
+	_ = readEvent(t, dispatcher)
+	_ = readEvent(t, dispatcher)
+
+	for _, connection := range []*websocket.Conn{dispatcher, target, bystander} {
+		if err := connection.WriteJSON(NewEvent("group.join", "", map[string]any{"groupId": "group-1"})); err != nil {
+			t.Fatalf("write group.join: %v", err)
+		}
+		if event := readEvent(t, connection); event.Type != "group.joined" {
+			t.Fatalf("expected group.joined, got %s", event.Type)
+		}
+	}
+
+	if err := dispatcher.WriteJSON(NewEvent("ptt.start", "req-direct", map[string]any{
+		"groupId":      "group-1",
+		"targetUserId": "user-1",
+	})); err != nil {
+		t.Fatalf("write direct ptt.start: %v", err)
+	}
+	if event := readEvent(t, dispatcher); event.Type != "ptt.granted" {
+		t.Fatalf("expected ptt.granted, got %s", event.Type)
+	}
+	if event := readEvent(t, dispatcher); event.Type != "ptt.started" {
+		t.Fatalf("expected dispatcher ptt.started, got %s", event.Type)
+	}
+	if event := readEvent(t, target); event.Type != "ptt.started" {
+		t.Fatalf("expected target ptt.started, got %s", event.Type)
+	}
+
+	frame := make([]byte, 28)
+	frame[0] = 0x01
+	copy(frame[1:17], []byte{
+		0x11, 0x11, 0x11, 0x11,
+		0x11, 0x11,
+		0x41, 0x11,
+		0x81, 0x11,
+		0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+	})
+	binary.BigEndian.PutUint64(frame[17:25], 1)
+	copy(frame[25:], []byte{0x01, 0x02, 0x03})
+	if err := dispatcher.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+		t.Fatalf("write direct audio frame: %v", err)
+	}
+
+	messageType, downlink, err := target.ReadMessage()
+	if err != nil {
+		t.Fatalf("read target downlink: %v", err)
+	}
+	if messageType != websocket.BinaryMessage || downlink[0] != 0x02 {
+		t.Fatalf("expected target binary downlink, type=%d frame=%x", messageType, downlink)
+	}
+
+	if err := bystander.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatalf("set bystander deadline: %v", err)
+	}
+	if _, _, err := bystander.ReadMessage(); err == nil {
+		t.Fatal("expected bystander not to receive direct PTT")
+	}
+}
+
 func (r fakeAccessRepository) CanJoinGroup(_ context.Context, _ string, _ string) error {
 	return r.joinErr
+}
+
+func (r fakeAccessRepository) GetOfflineGroupMembersPushTokens(_ context.Context, _ string, _ string) ([]PushTarget, error) {
+	return nil, nil
 }
 
 func TestHandlerRejectsInvalidToken(t *testing.T) {
@@ -339,7 +422,7 @@ func newWebSocketTestServer(t *testing.T, repository AccessRepository) (*httptes
 	hub := NewHub()
 	handler := NewHandler(manager, repository, fakeGPSRecorder{
 		location: gps.Location{RecordedAt: time.Now().UTC().Format(time.RFC3339)},
-	}, fakeSOSService{}, ptt.NewManager(fakePTTRepository{}), hub, []string{"http://localhost:5173"})
+	}, fakeSOSService{}, ptt.NewManager(fakePTTRepository{}), hub, nil, []string{"http://localhost:5173"})
 	router := gin.New()
 	router.GET("/ws", handler.Connect)
 

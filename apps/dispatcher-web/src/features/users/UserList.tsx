@@ -4,9 +4,16 @@ import type { PresenceEntry } from "./realtimeStore";
 interface UserListProps {
   users: UserSummary[];
   presence: Record<string, PresenceEntry>;
+  selectedUserId?: string;
+  onSelectUser?: (userId: string) => void;
 }
 
-export function UserList({ users, presence }: UserListProps) {
+export function UserList({
+  users,
+  presence,
+  selectedUserId,
+  onSelectUser,
+}: UserListProps) {
   const sortedUsers = [...users].sort((left, right) => {
     const leftOnline = presence[left.id]?.status === "online" ? 1 : 0;
     const rightOnline = presence[right.id]?.status === "online" ? 1 : 0;
@@ -25,7 +32,11 @@ export function UserList({ users, presence }: UserListProps) {
           return (
             <article
               key={user.id}
-              className="group flex items-center gap-3 rounded-xl border border-transparent px-3 py-2.5 transition hover:border-white/8 hover:bg-white/[0.035]"
+              className={`group flex items-center gap-3 rounded-xl border px-3 py-2.5 transition ${
+                selectedUserId === user.id
+                  ? "border-amber-300/40 bg-amber-300/8"
+                  : "border-transparent hover:border-white/8 hover:bg-white/[0.035]"
+              }`}
             >
               <div className="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-stone-800 text-xs font-bold text-stone-300">
                 {initials(user.fullName)}
@@ -46,11 +57,13 @@ export function UserList({ users, presence }: UserListProps) {
                 </div>
               </div>
               <button
-                aria-label={`Open ${user.fullName}`}
-                className="grid h-8 w-8 place-items-center rounded-lg text-stone-600 transition group-hover:bg-stone-800 group-hover:text-stone-300"
+                aria-label={`Talk directly to ${user.fullName}`}
+                className="rounded-lg px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-500 transition group-hover:bg-stone-800 group-hover:text-stone-200 disabled:opacity-30"
+                disabled={!online || !onSelectUser}
+                onClick={() => onSelectUser?.(user.id)}
                 type="button"
               >
-                →
+                Direct
               </button>
             </article>
           );
