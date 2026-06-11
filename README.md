@@ -73,6 +73,9 @@ Build binary API production untuk Linux:
 bun run build:api
 ```
 
+Bundle API berisi `api-server`, `migrate`, dan `seed`. Binary `seed` khusus
+membuat akun `superuser` dengan role `super_admin`.
+
 Build dispatcher production sekaligus membuat ZIP deployment:
 
 ```bash

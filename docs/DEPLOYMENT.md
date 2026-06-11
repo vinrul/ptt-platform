@@ -277,6 +277,7 @@ Bundle dihasilkan di:
 ptt-fleet/api-server/
   api-server
   migrate
+  seed
   migrations/
 ```
 
@@ -340,6 +341,7 @@ sudo cp -a ptt-fleet/api-server/. /opt/ptt-fleet/api-server/
 sudo chown -R ptt-fleet:ptt-fleet /opt/ptt-fleet /var/log/ptt-fleet
 sudo chmod 755 /opt/ptt-fleet/api-server/api-server
 sudo chmod 755 /opt/ptt-fleet/api-server/migrate
+sudo chmod 755 /opt/ptt-fleet/api-server/seed
 ```
 
 Pasang environment:
@@ -363,6 +365,24 @@ set -a
 set +a
 ./migrate up
 ```
+
+Buat akun production `superuser` dengan role `super_admin` setelah migration:
+
+```bash
+cd /opt/ptt-fleet/api-server
+set -a
+. /etc/ptt-fleet/api-server.env
+set +a
+read -rsp "Superuser password: " SUPERUSER_PASSWORD
+echo
+export SUPERUSER_PASSWORD
+./seed
+unset SUPERUSER_PASSWORD
+```
+
+Command dapat dijalankan ulang untuk mengaktifkan kembali akun dan mengganti
+password `superuser`. Password tidak memiliki nilai default dan minimal delapan
+karakter. Jangan menyimpan `SUPERUSER_PASSWORD` permanen di environment service.
 
 ## Run With systemd
 
