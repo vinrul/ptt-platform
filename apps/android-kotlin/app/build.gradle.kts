@@ -1,8 +1,27 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.gms.google-services")
 }
+
+val localProperties = Properties().apply {
+    val propertiesFile = rootProject.file("local.properties")
+    if (propertiesFile.exists()) {
+        propertiesFile.inputStream().use(::load)
+    }
+}
+
+fun signingValue(environmentName: String, propertyName: String): String? =
+    System.getenv(environmentName)
+        ?.takeIf { it.isNotBlank() }
+        ?: localProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = signingValue("ANDROID_RELEASE_STORE_FILE", "release.storeFile")
+val releaseStorePassword = signingValue("ANDROID_RELEASE_STORE_PASSWORD", "release.storePassword")
+val releaseKeyAlias = signingValue("ANDROID_RELEASE_KEY_ALIAS", "release.keyAlias")
+val releaseKeyPassword = signingValue("ANDROID_RELEASE_KEY_PASSWORD", "release.keyPassword")
 
 android {
     namespace = "id.nuwiarul.pttfleet"
@@ -19,13 +38,30 @@ android {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
     }
 
+    signingConfigs {
+        if (
+            releaseStoreFile != null &&
+            releaseStorePassword != null &&
+            releaseKeyAlias != null &&
+            releaseKeyPassword != null
+        ) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         debug {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
         }
         release {
             isMinifyEnabled = false
-            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            manifestPlaceholders["usesCleartextTraffic"] = "false"
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

@@ -274,6 +274,21 @@ MVP behavior: soft delete by setting `status = disabled`.
 
 User tidak boleh menonaktifkan akunnya sendiri.
 
+### POST /api/users/:id/reset-password
+
+Khusus role `super_admin`.
+
+Request:
+
+```json
+{
+  "newPassword": "new-password"
+}
+```
+
+Password minimal 8 karakter. Setelah berhasil, seluruh refresh token target
+dicabut dan perubahan dicatat sebagai audit action `user.password_reset`.
+
 ## Groups
 
 ### GET /api/groups

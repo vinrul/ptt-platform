@@ -4,6 +4,10 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    outDir: "../../ptt-fleet/dist-ptt-fleet",
+    emptyOutDir: true,
+  },
   server: {
     host: "0.0.0.0",
     port: 5173,

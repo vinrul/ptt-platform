@@ -1,10 +1,11 @@
 import type { GroupSummary, PttStateEvent, ServerRealtimeEvent } from "@ptt-fleet/shared-types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ensureAccessToken, fetchGroup, fetchGroups, fetchUsers } from "../lib/api";
+import { changePassword, ensureAccessToken, fetchGroup, fetchGroups, fetchUsers } from "../lib/api";
 import { decodeAudioDownlink, encodeAudioUplink } from "../lib/audioEnvelope";
 import { BrowserPttAudio } from "../lib/browserPttAudio";
 import { createRequestId } from "../lib/requestId";
 import { RealtimeClient } from "../lib/ws";
+import { PasswordDialog } from "../components/PasswordDialog";
 import { useAuthStore } from "../features/auth/authStore";
 import { DispatcherMap } from "../features/map/DispatcherMap";
 import { UserList } from "../features/users/UserList";
@@ -32,6 +33,7 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [pttStatus, setPttStatus] = useState("Standby");
   const [activeSpeakerId, setActiveSpeakerId] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const realtimeRef = useRef<RealtimeClient | null>(null);
   const activeSessionRef = useRef("");
   const audioSequenceRef = useRef(0n);
@@ -428,6 +430,13 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
               </>
             ) : null}
             <button
+              className="rounded-xl border border-white/10 px-3 py-2 text-xs font-bold uppercase tracking-wider text-stone-300 transition hover:bg-white/5"
+              onClick={() => setChangePasswordOpen(true)}
+              type="button"
+            >
+              Change password
+            </button>
+            <button
               className={`rounded-xl border px-3 py-2.5 text-xs font-bold uppercase tracking-[0.14em] ${
                 monitorEnabled
                   ? "border-emerald-300/40 bg-emerald-300/10 text-emerald-200"
@@ -468,6 +477,18 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
           </div>
         </footer>
       </div>
+      <PasswordDialog
+        description="Password baru akan mencabut seluruh sesi. Anda perlu login kembali setelah berhasil."
+        onClose={() => setChangePasswordOpen(false)}
+        onSubmit={async (currentPassword, newPassword) => {
+          await changePassword(session.accessToken, currentPassword, newPassword);
+          handleLogout();
+        }}
+        open={changePasswordOpen}
+        requireCurrentPassword
+        submitLabel="Change password"
+        title="Change your password"
+      />
     </main>
   );
 }

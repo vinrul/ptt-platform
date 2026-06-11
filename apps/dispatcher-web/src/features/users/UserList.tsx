@@ -59,7 +59,7 @@ export function UserList({
               <button
                 aria-label={`Talk directly to ${user.fullName}`}
                 className="rounded-lg px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-500 transition group-hover:bg-stone-800 group-hover:text-stone-200 disabled:opacity-30"
-                disabled={!online || !onSelectUser}
+                disabled={!onSelectUser}
                 onClick={() => onSelectUser?.(user.id)}
                 type="button"
               >

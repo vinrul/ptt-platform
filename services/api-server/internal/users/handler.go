@@ -217,6 +217,44 @@ func (h *Handler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+type resetPasswordRequest struct {
+	NewPassword string `json:"newPassword" binding:"required"`
+}
+
+func (h *Handler) ResetPassword(c *gin.Context) {
+	claims, err := auth.ClaimsFromContext(c)
+	if err != nil {
+		apiutil.Error(c, http.StatusUnauthorized, "unauthorized", "Authentication is required", nil)
+		return
+	}
+	if claims.Role != "super_admin" {
+		apiutil.Error(c, http.StatusForbidden, "forbidden", "Only super admin may reset user passwords", nil)
+		return
+	}
+
+	var request resetPasswordRequest
+	if err := c.ShouldBindJSON(&request); err != nil || len(request.NewPassword) < 8 {
+		apiutil.Error(c, http.StatusBadRequest, "validation_error", "New password must be at least 8 characters", nil)
+		return
+	}
+
+	err = h.service.ResetPassword(
+		c.Request.Context(),
+		claims.Subject,
+		c.Param("id"),
+		request.NewPassword,
+	)
+	if errors.Is(err, ErrNotFound) {
+		apiutil.Error(c, http.StatusNotFound, "not_found", "User not found", nil)
+		return
+	}
+	if err != nil {
+		apiutil.Error(c, http.StatusInternalServerError, "server_error", "Unable to reset user password", nil)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 func requireReadRole(c *gin.Context) (auth.Claims, bool) {
 	claims, err := auth.ClaimsFromContext(c)
 	if err != nil {

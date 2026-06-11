@@ -1,8 +1,10 @@
 import type { GroupSummary, UserRole, UserSummary } from "@ptt-fleet/shared-types";
 import { useEffect, useMemo, useState } from "react";
+import { PasswordDialog } from "../components/PasswordDialog";
 import { useAuthStore } from "../features/auth/authStore";
 import {
   addGroupMember,
+  changePassword,
   createGroup,
   createUser,
   fetchAuditLogs,
@@ -11,6 +13,7 @@ import {
   fetchGroups,
   fetchUsers,
   removeGroupMember,
+  resetUserPassword,
   updateUser,
   type AuditLog,
   type DeviceSummary,
@@ -29,6 +32,8 @@ export function AdminPage({ onBack }: { onBack: () => void }) {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<GroupDetail | null>(null);
   const [message, setMessage] = useState("");
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [passwordResetUser, setPasswordResetUser] = useState<UserSummary | null>(null);
 
   async function refresh() {
     setMessage("");
@@ -93,6 +98,9 @@ export function AdminPage({ onBack }: { onBack: () => void }) {
           <button className="admin-button" onClick={onBack} type="button">
             Live dispatcher
           </button>
+          <button className="admin-button" onClick={() => setChangePasswordOpen(true)} type="button">
+            Change password
+          </button>
           <button className="admin-button" onClick={logout} type="button">
             Logout
           </button>
@@ -124,7 +132,9 @@ export function AdminPage({ onBack }: { onBack: () => void }) {
         {tab === "users" ? (
           <UsersAdmin
             currentRole={session.user.role}
+            currentUserId={session.user.id}
             onChanged={refresh}
+            onResetPassword={setPasswordResetUser}
             token={session.accessToken}
             users={users}
           />
@@ -145,18 +155,57 @@ export function AdminPage({ onBack }: { onBack: () => void }) {
         {tab === "devices" ? <DevicesAdmin devices={devices} /> : null}
         {tab === "audit" ? <AuditAdmin logs={auditLogs} /> : null}
       </section>
+      <PasswordDialog
+        description="Password baru akan mencabut seluruh sesi. Anda perlu login kembali setelah berhasil."
+        onClose={() => setChangePasswordOpen(false)}
+        onSubmit={async (currentPassword, newPassword) => {
+          await changePassword(session.accessToken, currentPassword, newPassword);
+          clearSession();
+        }}
+        open={changePasswordOpen}
+        requireCurrentPassword
+        submitLabel="Change password"
+        title="Change your password"
+      />
+      <PasswordDialog
+        description={
+          passwordResetUser
+            ? `Tetapkan password baru untuk ${passwordResetUser.fullName}. Semua sesi user tersebut akan dicabut.`
+            : ""
+        }
+        onClose={() => setPasswordResetUser(null)}
+        onSubmit={async (_, newPassword) => {
+          if (!passwordResetUser) return;
+          await resetUserPassword(session.accessToken, passwordResetUser.id, newPassword);
+          const resetOwnPassword = passwordResetUser.id === session.user.id;
+          setPasswordResetUser(null);
+          if (resetOwnPassword) {
+            clearSession();
+          } else {
+            await refresh();
+            setMessage(`Password ${passwordResetUser.fullName} berhasil direset.`);
+          }
+        }}
+        open={passwordResetUser !== null}
+        submitLabel="Reset password"
+        title="Reset user password"
+      />
     </main>
   );
 }
 
 function UsersAdmin({
   currentRole,
+  currentUserId,
   onChanged,
+  onResetPassword,
   token,
   users,
 }: {
   currentRole: UserRole;
+  currentUserId: string;
   onChanged: () => Promise<void>;
+  onResetPassword: (user: UserSummary) => void;
   token: string;
   users: UserSummary[];
 }) {
@@ -250,20 +299,31 @@ function UsersAdmin({
                   <td>{user.role.replace("_", " ")}</td>
                   <td>{user.status}</td>
                   <td className="text-right">
-                    {editable ? (
-                      <button
-                        className="admin-button"
-                        onClick={async () => {
-                          await updateUser(token, user.id, {
-                            status: user.status === "active" ? "disabled" : "active",
-                          });
-                          await onChanged();
-                        }}
-                        type="button"
-                      >
-                        {user.status === "active" ? "Disable" : "Enable"}
-                      </button>
-                    ) : null}
+                    <div className="flex justify-end gap-2">
+                      {currentRole === "super_admin" ? (
+                        <button
+                          className="admin-button"
+                          onClick={() => onResetPassword(user)}
+                          type="button"
+                        >
+                          Reset password{user.id === currentUserId ? " (self)" : ""}
+                        </button>
+                      ) : null}
+                      {editable ? (
+                        <button
+                          className="admin-button"
+                          onClick={async () => {
+                            await updateUser(token, user.id, {
+                              status: user.status === "active" ? "disabled" : "active",
+                            });
+                            await onChanged();
+                          }}
+                          type="button"
+                        >
+                          {user.status === "active" ? "Disable" : "Enable"}
+                        </button>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               );

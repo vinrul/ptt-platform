@@ -17,6 +17,7 @@
     "podman:down": "podman compose -f infra/docker/docker-compose.local.yml --env-file .env down",
     "podman:logs": "podman compose -f infra/docker/docker-compose.local.yml --env-file .env logs -f",
     "dev:api": "bun scripts/api-dev.ts",
+    "build:api": "bun scripts/api-build.ts",
     "migrate:up": "cd services/api-server && go run ./cmd/migrate up",
     "migrate:down": "cd services/api-server && go run ./cmd/migrate down",
     "migrate:status": "cd services/api-server && go run ./cmd/migrate status",
@@ -27,12 +28,16 @@
     "android:install": "bun scripts/android-emulator.ts install",
     "android:open": "bun scripts/android-emulator.ts open",
     "android:run": "bun scripts/android-emulator.ts run",
-    "android:install:release": "bun scripts/android-emulator.ts install apps/android-kotlin/app/build/outputs/apk/release/app-release-local.apk",
-    "android:run:release": "bun scripts/android-emulator.ts run apps/android-kotlin/app/build/outputs/apk/release/app-release-local.apk",
+    "android:install:release": "bun scripts/android-emulator.ts install apps/android-kotlin/app/build/outputs/apk/release/app-release.apk",
+    "android:run:release": "bun scripts/android-emulator.ts run apps/android-kotlin/app/build/outputs/apk/release/app-release.apk",
     "android:build:debug": "bun scripts/android-build.ts debug",
     "android:build:release": "bun scripts/android-build.ts release",
     "dev:web": "bun --filter dispatcher-web dev",
-    "build:web": "bun --filter dispatcher-web build",
+    "build:web": "bun scripts/web-build.ts",
     "lint:web": "bun --filter dispatcher-web lint"
+  },
+  "devDependencies": {
+    "@types/archiver": "^8.0.0",
+    "archiver": "^8.0.0"
   }
 }

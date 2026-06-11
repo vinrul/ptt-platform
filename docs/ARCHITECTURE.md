@@ -1,6 +1,6 @@
 # Architecture
 
-Dokumen ini menjelaskan arsitektur teknis MVP PTT Fleet Platform.
+Dokumen ini menjelaskan arsitektur teknis Version 1 PTT Fleet Platform.
 
 ## High Level Diagram
 
@@ -118,13 +118,15 @@ Jika perlu horizontal scaling:
 - Audio relay tetap sebaiknya sticky per WebSocket connection atau pindah ke
   arsitektur media khusus.
 
-## Non-MVP
+## Version 2 Direction
 
-Fitur berikut tidak masuk MVP:
+Version 2 memprioritaskan:
 
-- WebRTC/SFU.
-- Audio recording penuh.
-- End-to-end encryption.
-- Multi-tenant billing.
-- Kubernetes.
-- Native DMR gateway.
+- Tenant context pada auth, database, API, realtime, FCM, dan audit.
+- Redis presence, lock, queue, dan pub/sub untuk multi-instance.
+- WebRTC/SFU hanya setelah load test membuktikan relay WebSocket tidak cukup.
+  Stack yang dipilih adalah custom audio-only SFU berbasis `pion/webrtc/v4`,
+  dengan `coturn` sebagai TURN production. `pion/turn` hanya menjadi opsi TURN
+  embedded.
+
+Detail dan acceptance criteria tersedia di `VERSION_2_PLAN.md`.

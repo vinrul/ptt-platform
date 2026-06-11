@@ -119,6 +119,88 @@ ptt.example.com      -> dispatcher
 api.ptt.example.com  -> backend API + WebSocket
 ```
 
+### Nginx + Cloudflare Origin SSL
+
+Konfigurasi alternatif untuk domain tunggal `ptt.vinrul.my.id` tersedia di:
+
+```text
+infra/nginx/nginx.conf
+```
+
+Konfigurasi tersebut:
+
+- Mendengarkan HTTP `80` dan HTTPS `443`.
+- Mengarahkan HTTP ke HTTPS.
+- Memakai Cloudflare Origin Certificate.
+- Mengaktifkan Cloudflare Authenticated Origin Pull.
+- Meneruskan web, REST API, dan WebSocket ke aplikasi pada
+  `127.0.0.1:9910`.
+
+Pasang konfigurasi:
+
+```bash
+sudo cp infra/nginx/nginx.conf \
+  /etc/nginx/sites-available/ptt.vinrul.my.id.conf
+sudo ln -s /etc/nginx/sites-available/ptt.vinrul.my.id.conf \
+  /etc/nginx/sites-enabled/ptt.vinrul.my.id.conf
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+File sertifikat yang harus tersedia:
+
+```text
+/etc/ssl/vinrul_my_id_cert.pem
+/etc/ssl/vinrul_my_id_key.pem
+/etc/ssl/cloudflare.crt
+```
+
+Permission private key:
+
+```bash
+sudo chown root:root /etc/ssl/vinrul_my_id_key.pem
+sudo chmod 600 /etc/ssl/vinrul_my_id_key.pem
+```
+
+Cloudflare:
+
+- DNS `ptt.vinrul.my.id` harus berstatus proxied.
+- SSL/TLS encryption mode memakai `Full (strict)`.
+- Authenticated Origin Pulls harus aktif.
+
+Karena `ssl_verify_client on`, akses HTTPS langsung ke origin tanpa sertifikat
+client Cloudflare akan ditolak. Port aplikasi `9910` sebaiknya hanya bind ke
+`127.0.0.1` dan tidak dibuka ke internet.
+
+Konfigurasi web dispatcher statis tersedia di:
+
+```text
+infra/nginx/ptt-dispatcher.vinrul.my.id.conf
+```
+
+Konfigurasi tersebut melayani React SPA dari `/var/www/dist-ptt-fleet` melalui
+`https://ptt-dispatcher.vinrul.my.id`, termasuk fallback route ke `index.html`
+dan cache jangka panjang untuk aset Vite.
+
+Pasang konfigurasi dispatcher:
+
+```bash
+sudo cp infra/nginx/ptt-dispatcher.vinrul.my.id.conf \
+  /etc/nginx/sites-available/ptt-dispatcher.vinrul.my.id.conf
+sudo ln -s /etc/nginx/sites-available/ptt-dispatcher.vinrul.my.id.conf \
+  /etc/nginx/sites-enabled/ptt-dispatcher.vinrul.my.id.conf
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+DNS `ptt-dispatcher.vinrul.my.id` juga harus berstatus proxied di Cloudflare.
+
+Environment API:
+
+```env
+CORS_ALLOWED_ORIGINS=https://ptt-dispatcher.vinrul.my.id
+```
+
 ## Production Services
 
 Compose production harus berisi:
@@ -171,6 +253,183 @@ nano .env
 docker compose -f infra/docker/docker-compose.prod.yml up -d postgres redis
 docker compose -f infra/docker/docker-compose.prod.yml run --rm api-server ./migrate up
 docker compose -f infra/docker/docker-compose.prod.yml up -d
+```
+
+## Native API Build
+
+Backend dapat dibuild sebagai binary Linux tanpa Docker:
+
+```bash
+bun run build:api
+```
+
+Default target:
+
+```text
+GOOS=linux
+GOARCH=amd64
+CGO_ENABLED=0
+```
+
+Bundle dihasilkan di:
+
+```text
+ptt-fleet/api-server/
+  api-server
+  migrate
+  migrations/
+```
+
+Target dapat dioverride untuk server ARM64:
+
+```bash
+API_BUILD_GOARCH=arm64 bun run build:api
+```
+
+PowerShell:
+
+```powershell
+$env:API_BUILD_GOARCH = "arm64"
+bun run build:api
+```
+
+## Dispatcher Web Build
+
+Build production dispatcher dan ZIP deployment:
+
+```bash
+bun run build:web
+```
+
+Output:
+
+```text
+ptt-fleet/
+  dist-ptt-fleet/
+  dist-ptt-fleet.zip
+```
+
+ZIP berisi folder `dist-ptt-fleet`. Default endpoint yang ditanam saat build:
+
+```text
+VITE_API_URL=https://ptt.vinrul.my.id
+VITE_WS_URL=wss://ptt.vinrul.my.id/ws
+```
+
+Endpoint dapat dioverride saat build menggunakan environment `VITE_API_URL`
+dan `VITE_WS_URL`.
+
+Deploy dispatcher:
+
+```bash
+sudo rm -rf /var/www/dist-ptt-fleet
+sudo unzip ptt-fleet/dist-ptt-fleet.zip -d /var/www
+sudo chown -R www-data:www-data /var/www/dist-ptt-fleet
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+## Native Server Layout
+
+Contoh instalasi binary:
+
+```bash
+sudo useradd --system --home /opt/ptt-fleet --shell /usr/sbin/nologin ptt-fleet
+sudo mkdir -p /opt/ptt-fleet/api-server /etc/ptt-fleet /var/log/ptt-fleet
+sudo cp -a ptt-fleet/api-server/. /opt/ptt-fleet/api-server/
+sudo chown -R ptt-fleet:ptt-fleet /opt/ptt-fleet /var/log/ptt-fleet
+sudo chmod 755 /opt/ptt-fleet/api-server/api-server
+sudo chmod 755 /opt/ptt-fleet/api-server/migrate
+```
+
+Pasang environment:
+
+```bash
+sudo cp infra/env/api-server.env.example /etc/ptt-fleet/api-server.env
+sudo nano /etc/ptt-fleet/api-server.env
+sudo chown root:ptt-fleet /etc/ptt-fleet/api-server.env
+sudo chmod 640 /etc/ptt-fleet/api-server.env
+```
+
+Environment contoh memakai `API_PORT=9910` agar sesuai dengan upstream Nginx
+`127.0.0.1:9910`. Jangan membuka port tersebut ke internet.
+
+Jalankan migration sebelum restart aplikasi:
+
+```bash
+cd /opt/ptt-fleet/api-server
+set -a
+. /etc/ptt-fleet/api-server.env
+set +a
+./migrate up
+```
+
+## Run With systemd
+
+Template:
+
+```text
+infra/systemd/ptt-fleet-api.service
+```
+
+Install:
+
+```bash
+sudo cp infra/systemd/ptt-fleet-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ptt-fleet-api
+sudo systemctl status ptt-fleet-api
+```
+
+Log dan operasi:
+
+```bash
+sudo journalctl -u ptt-fleet-api -f
+sudo systemctl restart ptt-fleet-api
+sudo systemctl stop ptt-fleet-api
+```
+
+## Run With Supervisor
+
+Gunakan Supervisor hanya jika systemd tidak dipakai untuk proses API yang sama.
+
+Template:
+
+```text
+infra/supervisor/ptt-fleet-api.conf
+infra/supervisor/run-with-env.sh
+```
+
+Install:
+
+```bash
+sudo cp infra/supervisor/run-with-env.sh \
+  /opt/ptt-fleet/api-server/run-with-env.sh
+sudo chmod 755 /opt/ptt-fleet/api-server/run-with-env.sh
+sudo chown ptt-fleet:ptt-fleet /opt/ptt-fleet/api-server/run-with-env.sh
+
+sudo cp infra/supervisor/ptt-fleet-api.conf \
+  /etc/supervisor/conf.d/ptt-fleet-api.conf
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl status ptt-fleet-api
+```
+
+Log dan operasi:
+
+```bash
+sudo supervisorctl tail -f ptt-fleet-api
+sudo supervisorctl restart ptt-fleet-api
+sudo supervisorctl stop ptt-fleet-api
+```
+
+Setelah service aktif:
+
+```bash
+curl http://127.0.0.1:9910/healthz
+curl http://127.0.0.1:9910/readyz
+sudo nginx -t
+sudo systemctl reload nginx
 ```
 
 ## First Admin

@@ -28,10 +28,10 @@ Fitur sampai Phase 9:
 
 ## Server URL Local
 
-Android emulator memakai:
+Default server aplikasi memakai:
 
 ```text
-http://100.82.105.93:8080
+https://ptt.vinrul.my.id
 
 Setelah login, aplikasi menjalankan foreground service `PTT Fleet patrol active`.
 Service ini mempertahankan WebSocket, join channel terakhir, dan playback suara
@@ -103,13 +103,11 @@ bun run android:build:release
 ```
 
 Build debug menjalankan unit test dan menghasilkan APK debug. Build release
-menjalankan lint, membuat APK unsigned, lalu menandatanganinya memakai Android
-debug keystore lokal agar dapat dipasang untuk pengujian:
+menjalankan lint dan menghasilkan APK yang ditandatangani release:
 
 ```text
 apps/android-kotlin/app/build/outputs/apk/debug/app-debug.apk
-apps/android-kotlin/app/build/outputs/apk/release/app-release-unsigned.apk
-apps/android-kotlin/app/build/outputs/apk/release/app-release-local.apk
+apps/android-kotlin/app/build/outputs/apk/release/app-release.apk
 ```
 
 Install release lokal ke emulator atau perangkat yang terhubung:
@@ -123,8 +121,16 @@ bun run android:run:release
 memasang dan membuka aplikasi. `android:install:release` digunakan ketika
 emulator atau perangkat fisik sudah terhubung ke ADB.
 
-`app-release-local.apk` memakai debug keystore lokal dan bukan untuk distribusi
-production. Release production harus ditandatangani dengan keystore production.
+Konfigurasi signing dibaca dari `local.properties` yang tidak di-commit, atau
+dari environment variable berikut untuk CI:
+
+```text
+ANDROID_RELEASE_STORE_FILE
+ANDROID_RELEASE_STORE_PASSWORD
+ANDROID_RELEASE_KEY_ALIAS
+ANDROID_RELEASE_KEY_PASSWORD
+```
+
 Keystore dan password production tidak boleh disimpan di repository.
 
 Perintah Gradle manual untuk macOS:

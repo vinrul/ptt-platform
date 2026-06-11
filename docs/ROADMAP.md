@@ -59,7 +59,7 @@
 - Backup script and restore test.
 - VPS smoke test.
 
-## Version 1.0
+## Version 1.0 - Feature Complete
 
 - GPS history playback.
 - Audio recording per talk session.
@@ -67,10 +67,19 @@
 - Better monitoring dashboard.
 - Redis pub/sub for multiple backend instances.
 
-## Version 2.0
+Catatan: kelulusan production tetap memerlukan restore backup, monitoring, dan
+smoke test VPS sesuai Milestone MVP 5.
 
-- WebRTC/SFU upgrade if needed.
-- Multi-tenant.
+## Version 2.0 - Multi-Tenant Scale
+
+- Tenant foundation dan migrasi tenant default.
+- Tenant-aware auth, API, WebSocket, FCM, audit, dan admin.
+- Redis presence, talk lock, queue, dan pub/sub untuk multi-instance.
+- Load test media dan observability.
+- WebRTC/SFU upgrade hanya jika ambang terukur terpenuhi, menggunakan custom
+  audio SFU berbasis `pion/webrtc/v4` dan `coturn` untuk TURN production.
 - CCTV/go2rtc integration.
 - Advanced reporting.
 - Mobile device policy/hardware key support.
+
+Rencana rinci tersedia di `docs/VERSION_2_PLAN.md`.

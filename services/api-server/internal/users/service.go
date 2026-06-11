@@ -237,6 +237,45 @@ func (s *Service) Disable(ctx context.Context, actorID string, userID string) er
 	return err
 }
 
+func (s *Service) ResetPassword(ctx context.Context, actorID string, userID string, newPassword string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	passwordHash, err := auth.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.store.Postgres.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx, `
+		UPDATE users
+		SET password_hash = $2, updated_at = now()
+		WHERE id = $1
+	`, userID, passwordHash)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE refresh_tokens
+		SET revoked_at = now()
+		WHERE user_id = $1 AND revoked_at IS NULL
+	`, userID); err != nil {
+		return err
+	}
+	if err := writeAudit(ctx, tx, actorID, "user.password_reset", userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func buildFilters(input ListInput) (string, []any) {
 	conditions := make([]string, 0, 3)
 	args := make([]any, 0, 3)

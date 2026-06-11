@@ -111,6 +111,7 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	protected.GET("/users/:id", userHandler.Get)
 	protected.PATCH("/users/:id", userHandler.Update)
 	protected.DELETE("/users/:id", userHandler.Delete)
+	protected.POST("/users/:id/reset-password", userHandler.ResetPassword)
 
 	protected.GET("/groups", groupHandler.List)
 	protected.POST("/groups", groupHandler.Create)

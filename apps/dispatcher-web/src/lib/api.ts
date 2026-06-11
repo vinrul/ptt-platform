@@ -95,6 +95,21 @@ export async function login(
   );
 }
 
+export async function changePassword(
+  accessToken: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await request<void>(
+    "/api/auth/change-password",
+    {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    },
+    accessToken,
+  );
+}
+
 export async function fetchUsers(accessToken: string): Promise<UserListResponse> {
   return request<UserListResponse>("/api/users?pageSize=100", {}, accessToken);
 }
@@ -122,6 +137,21 @@ export async function updateUser(
   return request<UserSummary>(
     `/api/users/${userId}`,
     { method: "PATCH", body: JSON.stringify(input) },
+    accessToken,
+  );
+}
+
+export async function resetUserPassword(
+  accessToken: string,
+  userId: string,
+  newPassword: string,
+): Promise<void> {
+  await request<void>(
+    `/api/users/${userId}/reset-password`,
+    {
+      method: "POST",
+      body: JSON.stringify({ newPassword }),
+    },
     accessToken,
   );
 }

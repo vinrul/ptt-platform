@@ -3,7 +3,7 @@
 PTT Fleet Platform adalah sistem Push-to-Talk over IP sederhana untuk komunikasi
 lapangan, GPS tracking realtime, SOS event, dan dispatcher web berbasis peta.
 
-## Stack MVP
+## Stack Version 1
 
 - Backend: Go + Gin.
 - WebSocket: gorilla/websocket.
@@ -18,6 +18,8 @@ lapangan, GPS tracking realtime, SOS event, dan dispatcher web berbasis peta.
 
 - `AGENTS.md` - aturan kerja agent/developer.
 - `PLAN.md` - rencana implementasi MVP.
+- `docs/VERSION_2_PLAN.md` - rencana multi-tenant, scaling, dan evaluasi
+  WebRTC/SFU.
 - `docs/ARCHITECTURE.md` - desain arsitektur.
 - `docs/API.md` - kontrak REST API.
 - `docs/WEBSOCKET_PROTOCOL.md` - kontrak event realtime dan audio binary.
@@ -65,5 +67,26 @@ Untuk `bun run dev:api` dari host, backend memakai default local:
 Untuk alur manual, jalankan `bun run docker:local` dulu agar PostgreSQL dan Redis
 tersedia.
 
+Build binary API production untuk Linux:
+
+```bash
+bun run build:api
+```
+
+Build dispatcher production sekaligus membuat ZIP deployment:
+
+```bash
+bun run build:web
+```
+
+Semua artefak deployment dihasilkan di folder `ptt-fleet/`.
+
+Template native deployment tersedia untuk systemd dan Supervisor di
+`infra/systemd` serta `infra/supervisor`.
+
 Repo saat ini dirancang agar dibangun bertahap dari backend foundation, realtime
 presence, GPS, SOS, lalu PTT audio Android-to-Android.
+
+Fitur inti Version 1 sudah tersedia. Version 2 memprioritaskan isolasi
+multi-tenant dan horizontal scaling. Audio Opus WebSocket tetap dipertahankan
+sampai load test menunjukkan SFU diperlukan.

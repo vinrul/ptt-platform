@@ -22,7 +22,7 @@
     <string name="current_password_required">Current password is required.</string>
     <string name="password_confirmation_mismatch">New password confirmation does not match.</string>
     <string name="password_changed">Password changed. Please login again.</string>
-    <string name="default_server_url">http://100.82.105.93:8080</string>
+    <string name="default_server_url">https://ptt.vinrul.my.id</string>
     <string name="login">Connect</string>
     <string name="connecting">Connecting…</string>
     <string name="logout">Logout</string>

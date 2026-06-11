@@ -1,9 +1,14 @@
 # PLAN.md
 
-# PTT Fleet Platform - MVP Project Plan
+# PTT Fleet Platform - Version 1 Project Plan
 
 Dokumen ini adalah rencana kerja bertahap untuk membangun sistem Push-to-Talk
 over IP sampai bisa diuji lokal dan live di VPS.
+
+Implementasi fitur inti Version 1 telah tercapai. Pekerjaan Version 2 untuk
+multi-tenant, horizontal scaling, dan evaluasi WebRTC/SFU dilanjutkan di
+`docs/VERSION_2_PLAN.md`. Phase di bawah tetap menjadi checklist operasional V1,
+terutama deployment, backup restore, monitoring, dan smoke test live.
 
 Keputusan teknis final MVP:
 
