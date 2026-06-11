@@ -25,7 +25,7 @@ import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import id.nuwiarul.pttfleet.auth.AuthRepository
 import id.nuwiarul.pttfleet.auth.AuthSession
-import id.nuwiarul.pttfleet.auth.SecureTokenStore
+import id.nuwiarul.pttfleet.auth.SessionManager
 import id.nuwiarul.pttfleet.auth.ServerSettingsStore
 import id.nuwiarul.pttfleet.audio.PttAudioEngine
 import id.nuwiarul.pttfleet.audio.AudioRouting
@@ -50,7 +50,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private lateinit var binding: ActivityMainBinding
-    private lateinit var tokenStore: SecureTokenStore
+    private lateinit var sessionManager: SessionManager
     private lateinit var serverSettingsStore: ServerSettingsStore
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -141,7 +141,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         setContentView(binding.root)
         applySystemBarInsets()
 
-        tokenStore = SecureTokenStore(applicationContext)
+        sessionManager = SessionManager.getInstance(applicationContext)
         serverSettingsStore = ServerSettingsStore(applicationContext)
         audioEngine = PttAudioEngine(
             onEncodedFrame = { payload ->
@@ -187,13 +187,13 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                 renderGroupMembers(emptyList())
                 realtimeClient.joinGroup(group.id)
                 PatrolService.joinGroup(applicationContext, group.id)
-                tokenStore.load()?.let { loadGroupMembers(it, group.id) }
+                loadGroupMembers(group.id)
             }
         }
         configurePttButton(binding.pttButton) { null }
         configurePttButton(binding.targetPttButton) { targetUserId }
 
-        tokenStore.load()?.let { showSession(it) } ?: showLogin()
+        sessionManager.currentSession()?.let { showSession(it) } ?: showLogin()
     }
 
     private fun applySystemBarInsets() {
@@ -276,7 +276,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             runCatching {
                 authRepository.login(serverUrl, username, password)
             }.onSuccess { session ->
-                tokenStore.save(session)
+                sessionManager.save(session)
                 binding.passwordInput.text?.clear()
                 showSession(session)
             }.onFailure { error ->
@@ -302,15 +302,13 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         binding.connectionDetailText.setText(R.string.realtime_opening)
         showTab(SessionTab.HOME)
 
-        realtimeClient.connect(session)
-
         val isWakeup = intent?.getBooleanExtra("is_wakeup", false) == true
         if (!isWakeup) {
             requestStartupPermissions()
         }
 
         PatrolService.start(applicationContext)
-        loadGroups(session)
+        loadGroups()
 
         // Fetch and upload Firebase Cloud Messaging token for background PTT wakeups
         com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
@@ -346,14 +344,14 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         PatrolService.stopTracking(applicationContext)
         realtimeClient.disconnect()
         PatrolService.stop(applicationContext)
-        tokenStore.clear()
+        sessionManager.clear()
         binding.passwordInput.text?.clear()
         binding.showPasswordCheck.isChecked = false
         showLogin()
     }
 
     private fun showChangePasswordDialog() {
-        val session = tokenStore.load() ?: return
+        if (sessionManager.currentSession() == null) return
         val dialogBinding = DialogChangePasswordBinding.inflate(layoutInflater)
         val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.change_password_title)
@@ -388,6 +386,8 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                 dialogBinding.changePasswordError.visibility = View.GONE
                 lifecycleScope.launch {
                     runCatching {
+                        val session = sessionManager.validSession()
+                            ?: throw IllegalStateException(getString(R.string.login_failed))
                         authRepository.changePassword(session, currentPassword, newPassword)
                     }.onSuccess {
                         dialog.dismiss()
@@ -418,9 +418,13 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         input.setSelection(cursor.coerceAtLeast(0))
     }
 
-    private fun loadGroups(session: AuthSession) {
+    private fun loadGroups() {
         lifecycleScope.launch {
-            runCatching { groupRepository.list(session) }
+            runCatching {
+                val session = sessionManager.validSession()
+                    ?: throw IllegalStateException(getString(R.string.login_failed))
+                groupRepository.list(session)
+            }
                 .onSuccess { items ->
                     groups = items
                     binding.groupSpinner.adapter = ArrayAdapter(
@@ -436,16 +440,21 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         }
     }
 
-    private fun loadGroupMembers(session: AuthSession, groupId: String) {
+    private fun loadGroupMembers(groupId: String) {
         binding.pttStatusText.setText(R.string.members_loading)
         lifecycleScope.launch {
-            runCatching { groupRepository.members(session, groupId) }
-                .onSuccess { members ->
+            var activeSession: AuthSession? = null
+            runCatching {
+                sessionManager.validSession()
+                    ?.also { activeSession = it }
+                    ?.let { groupRepository.members(it, groupId) }
+                    ?: throw IllegalStateException(getString(R.string.login_failed))
+            }.onSuccess { members ->
                     if (groups.getOrNull(binding.groupSpinner.selectedItemPosition)?.id != groupId) {
                         return@onSuccess
                     }
                     groupMembers = members.filter {
-                        it.userId != session.user.id &&
+                        it.userId != activeSession?.user?.id &&
                             it.role != "super_admin" &&
                             it.role != "dispatcher"
                     }

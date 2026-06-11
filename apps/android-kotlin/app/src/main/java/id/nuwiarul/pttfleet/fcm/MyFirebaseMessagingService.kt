@@ -7,7 +7,7 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import id.nuwiarul.pttfleet.PatrolService
 import id.nuwiarul.pttfleet.auth.EndpointNormalizer
-import id.nuwiarul.pttfleet.auth.SecureTokenStore
+import id.nuwiarul.pttfleet.auth.SessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -60,28 +60,40 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         const val KEY_FCM_TOKEN = "fcm_token"
 
         fun uploadToken(context: Context, token: String) {
-            val session = SecureTokenStore(context).load() ?: return
-            if (session.deviceId.isBlank()) {
-                Log.w(TAG, "Cannot upload FCM token: deviceId is empty.")
-                return
-            }
-
-            val client = OkHttpClient()
-            val requestBody = JSONObject()
-                .put("pushToken", token)
-                .toString()
-                .toRequestBody("application/json; charset=utf-8".toMediaType())
-
-            val url = "${EndpointNormalizer.serverUrl(session.serverUrl)}/api/devices/${session.deviceId}/push-token"
-            val request = Request.Builder()
-                .url(url)
-                .put(requestBody)
-                .header("Authorization", "Bearer ${session.accessToken}")
-                .build()
-
             CoroutineScope(Dispatchers.IO).launch {
                 runCatching {
+                    val sessionManager = SessionManager.getInstance(context)
+                    var session = sessionManager.validSession() ?: return@runCatching
+                    if (session.deviceId.isBlank()) {
+                        Log.w(TAG, "Cannot upload FCM token: deviceId is empty.")
+                        return@runCatching
+                    }
+
+                    val client = OkHttpClient()
+                    val requestBody = JSONObject()
+                        .put("pushToken", token)
+                        .toString()
+                        .toRequestBody("application/json; charset=utf-8".toMediaType())
+                    val url =
+                        "${EndpointNormalizer.serverUrl(session.serverUrl)}/api/devices/${session.deviceId}/push-token"
+                    var request = Request.Builder()
+                        .url(url)
+                        .put(requestBody)
+                        .header("Authorization", "Bearer ${session.accessToken}")
+                        .build()
+
                     client.newCall(request).execute().use { response ->
+                        if (response.code == 401 || response.code == 403) {
+                            session = sessionManager.validSession(forceRefresh = true)
+                                ?: return@runCatching
+                            request = request.newBuilder()
+                                .header("Authorization", "Bearer ${session.accessToken}")
+                                .build()
+                            client.newCall(request).execute().use { retryResponse ->
+                                logUploadResult(retryResponse.code, retryResponse.body?.string())
+                            }
+                            return@runCatching
+                        }
                         if (!response.isSuccessful) {
                             Log.e(TAG, "Failed to upload FCM token: HTTP ${response.code} - ${response.body?.string()}")
                         } else {
@@ -91,6 +103,14 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 }.onFailure {
                     Log.e(TAG, "Error uploading FCM token: ${it.message}", it)
                 }
+            }
+        }
+
+        private fun logUploadResult(statusCode: Int, body: String?) {
+            if (statusCode !in 200..299) {
+                Log.e(TAG, "Failed to upload FCM token after refresh: HTTP $statusCode - $body")
+            } else {
+                Log.d(TAG, "FCM token uploaded successfully after session refresh.")
             }
         }
     }

@@ -21,6 +21,8 @@ object EndpointNormalizer {
 
     fun loginUrl(serverUrl: String): String = "${serverUrl(serverUrl)}/api/auth/login"
 
+    fun refreshUrl(serverUrl: String): String = "${serverUrl(serverUrl)}/api/auth/refresh"
+
     fun websocketUrl(serverUrl: String, accessToken: String): String {
         val normalized = serverUrl(serverUrl)
         val websocketBase = when {

@@ -7,6 +7,8 @@ Fitur sampai Phase 9:
 - Kotlin native, min SDK 26.
 - Login REST dengan input server URL, username, dan password.
 - Access/refresh token dienkripsi memakai AES-GCM dengan key di Android Keystore.
+- Access token diperbarui otomatis sekitar 30 detik sebelum kedaluwarsa.
+- Refresh token dirotasi dan pasangan token baru langsung disimpan terenkripsi.
 - WebSocket OkHttp dengan JWT query token.
 - `connection.ready`, heartbeat 25 detik, dan reconnect exponential backoff.
 - Timeout handshake WebSocket 15 detik; socket yang belum ready akan dicoba ulang.
@@ -76,6 +78,11 @@ FCM `ptt_wakeup` akan menghidupkan service, menyambungkan ulang WebSocket,
 bergabung ke `groupId` dari payload, meminta satu lokasi terbaru, lalu mengirim
 `gps.update`. Layar dibangunkan sekitar 8 detik. Android dapat menolak membuka
 Activity otomatis dari background, tetapi wake lock dan notifikasi tetap aktif.
+Sebelum reconnect, service memakai access token yang masih valid atau menukar
+refresh token terlebih dahulu. Jika handshake WebSocket ditolak dengan
+`401/403`, service melakukan satu refresh terkoordinasi lalu reconnect dengan
+access token baru. Jika refresh token sudah kedaluwarsa atau dicabut, sesi lokal
+dihapus dan user harus login kembali.
 
 Untuk direct PTT, target tidak harus sedang online. Server mengirim
 `ptt_wakeup` hanya ke perangkat user yang dipilih; audio mulai diterima setelah

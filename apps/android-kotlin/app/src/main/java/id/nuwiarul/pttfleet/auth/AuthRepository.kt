@@ -66,6 +66,30 @@ class AuthRepository(
         }
     }
 
+    suspend fun refresh(session: AuthSession): AuthSession = withContext(Dispatchers.IO) {
+        val requestBody = JSONObject()
+            .put("refreshToken", session.refreshToken)
+            .toString()
+            .toRequestBody(JSON_MEDIA_TYPE)
+
+        val request = Request.Builder()
+            .url(EndpointNormalizer.refreshUrl(session.serverUrl))
+            .post(requestBody)
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw AuthRefreshException(
+                    errorMessage(body, response.code),
+                    sessionInvalid = response.code == 401 || response.code == 403,
+                )
+            }
+
+            parseSession(session.serverUrl, body)
+        }
+    }
+
     private fun parseSession(serverUrl: String, body: String): AuthSession {
         val root = JSONObject(body)
         val user = root.getJSONObject("user")
@@ -98,3 +122,8 @@ class AuthRepository(
 }
 
 class AuthException(message: String) : Exception(message)
+
+class AuthRefreshException(
+    message: String,
+    val sessionInvalid: Boolean,
+) : Exception(message)

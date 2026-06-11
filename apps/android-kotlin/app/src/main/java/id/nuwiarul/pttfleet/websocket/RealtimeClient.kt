@@ -38,6 +38,7 @@ interface RealtimeListener {
     fun onPttStarted(sessionId: String, groupId: String, speakerUserId: String)
     fun onPttStopped(sessionId: String, groupId: String, reason: String)
     fun onAudioFrame(sessionId: String, sequence: Long, payload: ByteArray)
+    fun onAuthenticationRequired() = Unit
 }
 
 class RealtimeClient private constructor() {
@@ -420,6 +421,7 @@ class RealtimeClient private constructor() {
         }
 
         override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
+            val authenticationRejected = response?.code == 401 || response?.code == 403
             synchronized(this@RealtimeClient) {
                 if (socket !== webSocket) return
                 socket = null
@@ -427,10 +429,20 @@ class RealtimeClient private constructor() {
                 heartbeatFuture = null
                 readyTimeoutFuture?.cancel(false)
                 readyTimeoutFuture = null
-                scheduleReconnect()
+                if (authenticationRejected) {
+                    reconnectFuture?.cancel(false)
+                    reconnectFuture = null
+                    postStatus(ConnectionStatus.IDLE)
+                } else {
+                    scheduleReconnect()
+                }
             }
             mainHandler.post {
-                listeners.forEach { it.onError(error.message ?: "Realtime connection failed") }
+                if (authenticationRejected) {
+                    listeners.forEach { it.onAuthenticationRequired() }
+                } else {
+                    listeners.forEach { it.onError(error.message ?: "Realtime connection failed") }
+                }
             }
         }
     }

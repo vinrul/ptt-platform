@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import id.nuwiarul.pttfleet.audio.PttAudioEngine
 import id.nuwiarul.pttfleet.audio.AudioRouting
 import id.nuwiarul.pttfleet.auth.SecureTokenStore
+import id.nuwiarul.pttfleet.auth.SessionManager
 import id.nuwiarul.pttfleet.location.GpsSample
 import id.nuwiarul.pttfleet.location.LocationTracker
 import id.nuwiarul.pttfleet.location.TrackingPreferenceStore
@@ -26,6 +27,12 @@ import android.net.wifi.WifiManager
 import id.nuwiarul.pttfleet.websocket.ConnectionStatus
 import id.nuwiarul.pttfleet.websocket.RealtimeClient
 import id.nuwiarul.pttfleet.websocket.RealtimeListener
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 
 class PatrolService : Service(), RealtimeListener {
@@ -38,9 +45,13 @@ class PatrolService : Service(), RealtimeListener {
     private var wifiLock: WifiManager.WifiLock? = null
     private var locationTracker: LocationTracker? = null
     private var pendingWakeLocation = false
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private lateinit var sessionManager: SessionManager
+    private var connectionJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
+        sessionManager = SessionManager.getInstance(applicationContext)
         isTrackingActive = TrackingPreferenceStore(applicationContext).isEnabled()
         createNotificationChannel()
         audioEngine = PttAudioEngine(
@@ -171,6 +182,8 @@ class PatrolService : Service(), RealtimeListener {
         AudioRouting.setSpeakerphoneOn(applicationContext, false)
         realtimeClient.removeListener(this)
         realtimeClient.disconnect()
+        connectionJob?.cancel()
+        serviceScope.cancel()
         audioEngine.release()
         locationTracker?.stop()
         locationTracker = null
@@ -228,6 +241,10 @@ class PatrolService : Service(), RealtimeListener {
 
     override fun onError(message: String) = updateNotification(message)
 
+    override fun onAuthenticationRequired() {
+        ensureConnected(force = true, forceRefresh = true)
+    }
+
     override fun onGroupJoined(groupId: String, onlineUserIds: Set<String>) {
         updateNotification(getString(R.string.background_channel_ready))
     }
@@ -262,18 +279,29 @@ class PatrolService : Service(), RealtimeListener {
         audioEngine.play(sessionId, sequence, payload)
     }
 
-    private fun ensureConnected(force: Boolean = false) {
-        val session = SecureTokenStore(applicationContext).load()
-        if (session == null) {
-            stopSelf()
-            return
-        }
-        ownUserId = session.user.id
-        selectedGroupId = getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
-            .getString(KEY_GROUP_ID, selectedGroupId)
-            
-        if (force || realtimeClient.status == ConnectionStatus.IDLE) {
-            realtimeClient.connect(session, force)
+    private fun ensureConnected(force: Boolean = false, forceRefresh: Boolean = false) {
+        if (connectionJob?.isActive == true) return
+        connectionJob = serviceScope.launch {
+            runCatching {
+                sessionManager.validSession(forceRefresh)
+            }.onSuccess { session ->
+                if (session == null) {
+                    stopSelf()
+                    return@onSuccess
+                }
+                ownUserId = session.user.id
+                selectedGroupId = getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
+                    .getString(KEY_GROUP_ID, selectedGroupId)
+
+                if (force || realtimeClient.status == ConnectionStatus.IDLE) {
+                    realtimeClient.connect(session, force)
+                }
+            }.onFailure { error ->
+                updateNotification(error.message ?: getString(R.string.background_offline))
+                if (sessionManager.currentSession() == null) {
+                    stopSelf()
+                }
+            }
         }
     }
 
