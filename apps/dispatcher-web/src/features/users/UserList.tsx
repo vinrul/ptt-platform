@@ -6,6 +6,7 @@ interface UserListProps {
   presence: Record<string, PresenceEntry>;
   selectedUserId?: string;
   onSelectUser?: (userId: string) => void;
+  onViewHistory?: (userId: string) => void;
 }
 
 export function UserList({
@@ -13,6 +14,7 @@ export function UserList({
   presence,
   selectedUserId,
   onSelectUser,
+  onViewHistory,
 }: UserListProps) {
   const sortedUsers = [...users].sort((left, right) => {
     const leftOnline = presence[left.id]?.status === "online" ? 1 : 0;
@@ -56,15 +58,27 @@ export function UserList({
                   </span>
                 </div>
               </div>
-              <button
-                aria-label={`Talk directly to ${user.fullName}`}
-                className="rounded-lg px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-500 transition group-hover:bg-stone-800 group-hover:text-stone-200 disabled:opacity-30"
-                disabled={!onSelectUser}
-                onClick={() => onSelectUser?.(user.id)}
-                type="button"
-              >
-                Direct
-              </button>
+              <div className="flex items-center gap-1">
+                {onViewHistory ? (
+                  <button
+                    aria-label={`View location history for ${user.fullName}`}
+                    className="rounded-lg px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-500 transition hover:bg-stone-800 hover:text-emerald-300"
+                    onClick={() => onViewHistory(user.id)}
+                    type="button"
+                  >
+                    History
+                  </button>
+                ) : null}
+                <button
+                  aria-label={`Talk directly to ${user.fullName}`}
+                  className="rounded-lg px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-500 transition group-hover:bg-stone-800 group-hover:text-stone-200 disabled:opacity-30"
+                  disabled={!onSelectUser}
+                  onClick={() => onSelectUser?.(user.id)}
+                  type="button"
+                >
+                  Direct
+                </button>
+              </div>
             </article>
           );
         })

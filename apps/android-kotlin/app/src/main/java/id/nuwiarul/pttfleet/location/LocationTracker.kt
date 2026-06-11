@@ -76,7 +76,10 @@ class LocationTracker(
     fun isTracking(): Boolean = tracking
 
     @SuppressLint("MissingPermission")
-    fun requestCurrentLocation(onResult: (GpsSample) -> Unit) {
+    fun requestCurrentLocation(
+        onResult: (GpsSample) -> Unit,
+        onUnavailable: (String) -> Unit = onError,
+    ) {
         val cancellation = CancellationTokenSource()
         client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellation.token)
             .addOnSuccessListener { location ->
@@ -86,15 +89,15 @@ class LocationTracker(
                     client.lastLocation
                         .addOnSuccessListener { cached ->
                             if (cached != null) onResult(cached.toGpsSample())
-                            else onError("Unable to obtain current location after FCM wakeup")
+                            else onUnavailable("Unable to obtain current location")
                         }
                         .addOnFailureListener {
-                            onError(it.message ?: "Unable to obtain last location")
+                            onUnavailable(it.message ?: "Unable to obtain last location")
                         }
                 }
             }
             .addOnFailureListener {
-                onError(it.message ?: "Unable to obtain current location")
+                onUnavailable(it.message ?: "Unable to obtain current location")
             }
     }
 

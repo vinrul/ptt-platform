@@ -289,6 +289,44 @@ Request:
 Password minimal 8 karakter. Setelah berhasil, seluruh refresh token target
 dicabut dan perubahan dicatat sebagai audit action `user.password_reset`.
 
+### GET /api/users/:id/gps-history
+
+Mengambil riwayat lokasi user. Hanya role `super_admin` dan `dispatcher` yang
+diizinkan.
+
+Query parameter:
+
+- `from`: waktu awal RFC3339, default 24 jam sebelum `to`.
+- `to`: waktu akhir RFC3339, default waktu server saat request.
+- `limit`: jumlah maksimum titik, default `200`, maksimum `1000`.
+
+Response:
+
+```json
+{
+  "user": {
+    "id": "uuid",
+    "username": "field1",
+    "fullName": "Field User One",
+    "role": "field_user",
+    "status": "active"
+  },
+  "items": [
+    {
+      "userId": "uuid",
+      "lat": -8.65,
+      "lng": 115.2167,
+      "speed": 1.2,
+      "heading": 90,
+      "accuracy": 8,
+      "recordedAt": "2026-06-11T09:00:00Z"
+    }
+  ]
+}
+```
+
+Item diurutkan dari lokasi terbaru ke lokasi terlama.
+
 ## Groups
 
 ### GET /api/groups

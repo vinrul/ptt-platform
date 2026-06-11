@@ -110,6 +110,7 @@ class PatrolService : Service(), RealtimeListener {
             }
             wakeScreenBriefly()
         }
+        val shouldSendPttLocation = intent?.action == ACTION_PTT_LOCATION_SNAPSHOT
         if (intent?.action == ACTION_JOIN_GROUP) {
             selectedGroupId = intent.getStringExtra(EXTRA_GROUP_ID)
             selectedGroupId?.let { groupId ->
@@ -126,6 +127,9 @@ class PatrolService : Service(), RealtimeListener {
         val forceConnect = intent?.action == ACTION_JOIN_GROUP || intent?.action == ACTION_WAKEUP
         ensureConnected(forceConnect)
         checkAndStartLocationTracking()
+        if (shouldSendPttLocation) {
+            sendPttLocationSnapshot()
+        }
         return START_STICKY
     }
 
@@ -313,12 +317,30 @@ class PatrolService : Service(), RealtimeListener {
             return
         }
         pendingWakeLocation = false
-        locationTracker?.requestCurrentLocation { sample ->
-            latestLocation = sample
-            realtimeClient.sendGps(sample)
-            onLocationChangedListener?.invoke(sample)
-            updateNotification(getString(R.string.background_location_sent))
-        }
+        locationTracker?.requestCurrentLocation(
+            onResult = { sample ->
+                latestLocation = sample
+                realtimeClient.sendGps(sample)
+                onLocationChangedListener?.invoke(sample)
+                updateNotification(getString(R.string.background_location_sent))
+            },
+        )
+    }
+
+    private fun sendPttLocationSnapshot() {
+        if (TrackingPreferenceStore(applicationContext).isEnabled()) return
+        if (!hasLocationPermission()) return
+
+        locationTracker?.requestCurrentLocation(
+            onResult = { sample ->
+                latestLocation = sample
+                realtimeClient.sendGps(sample)
+                onLocationChangedListener?.invoke(sample)
+            },
+            onUnavailable = {
+                Log.d("PatrolService", "Optional PTT location is unavailable: $it")
+            },
+        )
     }
 
     @Suppress("DEPRECATION")
@@ -394,6 +416,8 @@ class PatrolService : Service(), RealtimeListener {
         private const val ACTION_STOP = "id.nuwiarul.pttfleet.action.STOP_PATROL"
         private const val ACTION_START_TRACKING = "id.nuwiarul.pttfleet.action.START_TRACKING"
         private const val ACTION_STOP_TRACKING = "id.nuwiarul.pttfleet.action.STOP_TRACKING"
+        private const val ACTION_PTT_LOCATION_SNAPSHOT =
+            "id.nuwiarul.pttfleet.action.PTT_LOCATION_SNAPSHOT"
         private const val EXTRA_GROUP_ID = "group_id"
         private const val PREFERENCES_NAME = "patrol_service"
         private const val KEY_GROUP_ID = "selected_group_id"
@@ -444,6 +468,14 @@ class PatrolService : Service(), RealtimeListener {
             isTrackingActive = false
             context.startForegroundService(
                 Intent(context, PatrolService::class.java).setAction(ACTION_STOP_TRACKING)
+            )
+        }
+
+        fun sendPttLocationSnapshot(context: Context) {
+            if (TrackingPreferenceStore(context.applicationContext).isEnabled()) return
+            context.startForegroundService(
+                Intent(context, PatrolService::class.java)
+                    .setAction(ACTION_PTT_LOCATION_SNAPSHOT),
             )
         }
 

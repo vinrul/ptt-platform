@@ -17,6 +17,8 @@ Fitur sampai Phase 9:
 - GPS realtime melalui Fused Location Provider dengan interval adaptif.
 - Permission lokasi baru diminta ketika user menekan `Start GPS tracking`.
 - Update lokasi dikirim sebagai event `gps.update` selama WebSocket terhubung.
+- Jika switch GPS mati, awal transmisi PTT mencoba mengirim satu snapshot lokasi
+  tanpa mengaktifkan tracking periodik atau meminta permission baru.
 - Tombol SOS dengan dialog konfirmasi mengirim `sos.create`.
 - SOS menyertakan koordinat terakhir jika tersedia dan tetap dapat dikirim tanpa
   GPS fix.
@@ -62,6 +64,13 @@ request masuk antrean FIFO dan aplikasi menampilkan nomor antrean. Mikrofon baru
 aktif setelah `ptt.granted`. Melepas tombol sebelum mendapat grant mengirim
 `ptt.cancel`, sehingga user tidak tiba-tiba mulai bicara setelah niat bicara
 sudah dibatalkan.
+
+Saat server memberi `ptt.granted`, aplikasi mencoba mengambil satu lokasi jika
+switch GPS sedang mati. Pengambilan berlangsung asynchronous sehingga audio
+langsung berjalan tanpa menunggu GPS. Jika izin lokasi belum diberikan, layanan
+lokasi perangkat mati, atau lokasi tidak tersedia, snapshot dilewati secara
+silent dan user tetap dapat berbicara. Jika switch GPS aktif, tracking periodik
+sudah menangani lokasi sehingga snapshot PTT tidak dikirim.
 
 Setelah login, navigasi utama dibagi menjadi tiga tab:
 

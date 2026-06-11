@@ -86,6 +86,26 @@ func TestResetUserPasswordRequiresSuperAdmin(t *testing.T) {
 	}
 }
 
+func TestGpsHistoryRejectsSupervisor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := testConfig()
+	router := NewRouter(cfg, nil, nil)
+	token, err := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTTL()).
+		IssueAccessToken("supervisor-1", "supervisor", "supervisor")
+	if err != nil {
+		t.Fatalf("issue access token: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/users/user-1/gps-history", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d", response.Code)
+	}
+}
+
 func testConfig() config.Config {
 	return config.Config{
 		AppEnv:              "test",

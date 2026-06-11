@@ -1,6 +1,14 @@
 import type { GroupSummary, PttStateEvent, ServerRealtimeEvent } from "@ptt-fleet/shared-types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { changePassword, ensureAccessToken, fetchGroup, fetchGroups, fetchUsers } from "../lib/api";
+import {
+  changePassword,
+  ensureAccessToken,
+  fetchGpsHistory,
+  fetchGroup,
+  fetchGroups,
+  fetchUsers,
+  type GpsHistoryPoint,
+} from "../lib/api";
 import { decodeAudioDownlink, encodeAudioUplink } from "../lib/audioEnvelope";
 import { BrowserPttAudio } from "../lib/browserPttAudio";
 import { createRequestId } from "../lib/requestId";
@@ -34,6 +42,10 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [activeSpeakerId, setActiveSpeakerId] = useState("");
   const [loadError, setLoadError] = useState("");
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [mapUserId, setMapUserId] = useState("");
+  const [gpsHistory, setGpsHistory] = useState<GpsHistoryPoint[]>([]);
+  const [gpsHistoryLoading, setGpsHistoryLoading] = useState(false);
+  const [gpsHistoryError, setGpsHistoryError] = useState("");
   const realtimeRef = useRef<RealtimeClient | null>(null);
   const activeSessionRef = useRef("");
   const audioSequenceRef = useRef(0n);
@@ -271,6 +283,23 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     });
   }
 
+  async function showGpsHistory(userId: string) {
+    setMapUserId(userId);
+    setGpsHistory([]);
+    setGpsHistoryError("");
+    setGpsHistoryLoading(true);
+    try {
+      const result = await fetchGpsHistory(session.accessToken, userId);
+      setGpsHistory(result.items);
+    } catch (error) {
+      setGpsHistoryError(
+        error instanceof Error ? error.message : "Unable to load GPS history",
+      );
+    } finally {
+      setGpsHistoryLoading(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[#09110f] text-stone-100">
       <div className="grid min-h-screen grid-rows-[auto_1fr_auto]">
@@ -366,6 +395,11 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                 }
                 presence={presence}
                 selectedUserId={targetUserId}
+                onViewHistory={
+                  session.user.role === "super_admin" || session.user.role === "dispatcher"
+                    ? (userId) => void showGpsHistory(userId)
+                    : undefined
+                }
                 users={users.filter(
                   (user) => user.role === "field_user" && groupMemberIds.has(user.id),
                 )}
@@ -374,7 +408,27 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
           </aside>
 
           <section className="min-h-[460px]">
-            <DispatcherMap onAcknowledgeSos={acknowledgeSos} />
+            <DispatcherMap
+              history={gpsHistory}
+              historyEnabled={
+                session.user.role === "super_admin" || session.user.role === "dispatcher"
+              }
+              historyError={gpsHistoryError}
+              historyLoading={gpsHistoryLoading}
+              onAcknowledgeSos={acknowledgeSos}
+              onCloseUser={() => {
+                setMapUserId("");
+                setGpsHistory([]);
+                setGpsHistoryError("");
+              }}
+              onLoadHistory={(userId) => void showGpsHistory(userId)}
+              onSelectUser={(userId) => {
+                setMapUserId(userId);
+                setGpsHistory([]);
+                setGpsHistoryError("");
+              }}
+              selectedUserId={mapUserId}
+            />
           </section>
         </div>
 

@@ -71,6 +71,21 @@ interface ApiErrorBody {
   };
 }
 
+export interface GpsHistoryPoint {
+  userId: string;
+  lat: number;
+  lng: number;
+  speed?: number;
+  heading?: number;
+  accuracy?: number;
+  recordedAt: string;
+}
+
+export interface GpsHistoryResponse {
+  user: AuthUser;
+  items: GpsHistoryPoint[];
+}
+
 const configuredBaseUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "";
 let refreshPromise: Promise<AuthSession> | null = null;
 
@@ -201,6 +216,25 @@ export async function fetchDevices(accessToken: string): Promise<{ items: Device
 
 export async function fetchAuditLogs(accessToken: string): Promise<AuditListResponse> {
   return request<AuditListResponse>("/api/audit-logs?pageSize=100", {}, accessToken);
+}
+
+export async function fetchGpsHistory(
+  accessToken: string,
+  userId: string,
+  hours = 24,
+): Promise<GpsHistoryResponse> {
+  const to = new Date();
+  const from = new Date(to.getTime() - hours * 60 * 60 * 1_000);
+  const query = new URLSearchParams({
+    from: from.toISOString(),
+    to: to.toISOString(),
+    limit: "500",
+  });
+  return request<GpsHistoryResponse>(
+    `/api/users/${userId}/gps-history?${query.toString()}`,
+    {},
+    accessToken,
+  );
 }
 
 export async function ensureAccessToken(forceRefresh = false): Promise<string> {

@@ -68,6 +68,7 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	authService := auth.NewService(store, tokenManager, cfg.RefreshTTL())
 	authHandler := auth.NewHandler(authService)
 	userHandler := users.NewHandler(users.NewService(store))
+	gpsHandler := gps.NewHandler(gps.NewService(store))
 	groupHandler := groups.NewHandler(groups.NewService(store))
 	deviceHandler := devices.NewHandler(devices.NewService(store))
 	auditHandler := audit.NewHandler(audit.NewService(store))
@@ -112,6 +113,7 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	protected.PATCH("/users/:id", userHandler.Update)
 	protected.DELETE("/users/:id", userHandler.Delete)
 	protected.POST("/users/:id/reset-password", userHandler.ResetPassword)
+	protected.GET("/users/:id/gps-history", gpsHandler.History)
 
 	protected.GET("/groups", groupHandler.List)
 	protected.POST("/groups", groupHandler.Create)

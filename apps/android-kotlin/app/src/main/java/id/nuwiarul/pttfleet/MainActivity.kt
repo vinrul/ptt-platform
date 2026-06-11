@@ -742,6 +742,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         activePttSessionId = sessionId
         audioSequence = 0
         binding.pttStatusText.setText(R.string.ptt_transmitting)
+        PatrolService.sendPttLocationSnapshot(applicationContext)
         AudioRouting.setSpeakerphoneOn(applicationContext, true)
         audioEngine.startCapture()
     }

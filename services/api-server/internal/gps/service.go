@@ -6,10 +6,15 @@ import (
 	"math"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"ptt-fleet/services/api-server/internal/db"
 )
 
-var ErrInvalidLocation = errors.New("invalid GPS location")
+var (
+	ErrInvalidLocation = errors.New("invalid GPS location")
+	ErrUserNotFound    = errors.New("user not found")
+)
 
 type Update struct {
 	Lat      float64  `json:"lat"`
@@ -27,6 +32,19 @@ type Location struct {
 	Heading    *float64 `json:"heading,omitempty"`
 	Accuracy   *float64 `json:"accuracy,omitempty"`
 	RecordedAt string   `json:"recordedAt"`
+}
+
+type HistoryUser struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	FullName string `json:"fullName"`
+	Role     string `json:"role"`
+	Status   string `json:"status"`
+}
+
+type HistoryResult struct {
+	User  HistoryUser `json:"user"`
+	Items []Location  `json:"items"`
 }
 
 type Service struct {
@@ -71,6 +89,73 @@ func (s *Service) Record(ctx context.Context, userID string, update Update) (Loc
 		Accuracy:   update.Accuracy,
 		RecordedAt: recordedAt.UTC().Format(time.RFC3339Nano),
 	}, nil
+}
+
+func (s *Service) History(
+	ctx context.Context,
+	userID string,
+	from time.Time,
+	to time.Time,
+	limit int,
+) (HistoryResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var result HistoryResult
+	err := s.store.Postgres.QueryRow(ctx, `
+		SELECT id, username, full_name, role, status
+		FROM users
+		WHERE id = $1
+	`, userID).Scan(
+		&result.User.ID,
+		&result.User.Username,
+		&result.User.FullName,
+		&result.User.Role,
+		&result.User.Status,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return HistoryResult{}, ErrUserNotFound
+	}
+	if err != nil {
+		return HistoryResult{}, err
+	}
+
+	rows, err := s.store.Postgres.Query(ctx, `
+		SELECT lat, lng, speed, heading, accuracy, recorded_at
+		FROM gps_logs
+		WHERE user_id = $1
+		  AND recorded_at >= $2
+		  AND recorded_at <= $3
+		ORDER BY recorded_at DESC
+		LIMIT $4
+	`, userID, from, to, limit)
+	if err != nil {
+		return HistoryResult{}, err
+	}
+	defer rows.Close()
+
+	result.Items = make([]Location, 0)
+	for rows.Next() {
+		var location Location
+		var recordedAt time.Time
+		location.UserID = userID
+		if err := rows.Scan(
+			&location.Lat,
+			&location.Lng,
+			&location.Speed,
+			&location.Heading,
+			&location.Accuracy,
+			&recordedAt,
+		); err != nil {
+			return HistoryResult{}, err
+		}
+		location.RecordedAt = recordedAt.UTC().Format(time.RFC3339Nano)
+		result.Items = append(result.Items, location)
+	}
+	if err := rows.Err(); err != nil {
+		return HistoryResult{}, err
+	}
+	return result, nil
 }
 
 func validate(update Update) error {

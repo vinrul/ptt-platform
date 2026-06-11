@@ -1,21 +1,42 @@
 import { useEffect, useRef } from "react";
-import { Map as MaptalksMap, Marker, TileLayer, VectorLayer } from "maptalks";
+import { LineString, Map as MaptalksMap, Marker, TileLayer, VectorLayer } from "maptalks";
+import type { GpsHistoryPoint } from "../../lib/api";
 import { useRealtimeStore } from "../users/realtimeStore";
 
 interface DispatcherMapProps {
   onAcknowledgeSos: (id: string) => void;
+  onCloseUser: () => void;
+  onLoadHistory: (userId: string) => void;
+  onSelectUser: (userId: string) => void;
+  selectedUserId: string;
+  history: GpsHistoryPoint[];
+  historyError: string;
+  historyLoading: boolean;
+  historyEnabled: boolean;
 }
 
-export function DispatcherMap({ onAcknowledgeSos }: DispatcherMapProps) {
+export function DispatcherMap({
+  onAcknowledgeSos,
+  onCloseUser,
+  onLoadHistory,
+  onSelectUser,
+  selectedUserId,
+  history,
+  historyError,
+  historyLoading,
+  historyEnabled,
+}: DispatcherMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MaptalksMap | null>(null);
   const markerLayerRef = useRef<VectorLayer | null>(null);
+  const historyLayerRef = useRef<VectorLayer | null>(null);
   const markersRef = useRef(new globalThis.Map<string, Marker>());
   const sosMarkersRef = useRef(new globalThis.Map<string, Marker>());
   const hasCenteredRef = useRef(false);
   const lastFocusedSosRef = useRef<string | null>(null);
   const locations = useRealtimeStore((state) => state.locations);
   const users = useRealtimeStore((state) => state.users);
+  const presence = useRealtimeStore((state) => state.presence);
   const sosAlerts = useRealtimeStore((state) => state.sosAlerts);
   const focusedSosId = useRealtimeStore((state) => state.focusedSosId);
 
@@ -38,12 +59,14 @@ export function DispatcherMap({ onAcknowledgeSos }: DispatcherMapProps) {
       }),
     });
     markerLayerRef.current = new VectorLayer("fleet-markers").addTo(map);
+    historyLayerRef.current = new VectorLayer("gps-history").addTo(map);
     mapRef.current = map;
 
     return () => {
       markers.clear();
       sosMarkers.clear();
       markerLayerRef.current = null;
+      historyLayerRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -88,6 +111,7 @@ export function DispatcherMap({ onAcknowledgeSos }: DispatcherMapProps) {
           shadowColor: "rgba(97, 230, 168, 0.5)",
         },
       }).addTo(layer);
+      marker.on("click", () => onSelectUser(userId));
       markersRef.current.set(userId, marker);
 
       if (!hasCenteredRef.current) {
@@ -95,7 +119,34 @@ export function DispatcherMap({ onAcknowledgeSos }: DispatcherMapProps) {
         map.animateTo({ center: coordinates, zoom: 15 });
       }
     }
-  }, [locations, users]);
+  }, [locations, onSelectUser, users]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = historyLayerRef.current;
+    if (!map || !layer) return;
+    layer.clear();
+    if (history.length === 0) return;
+
+    const chronological = [...history].sort((left, right) =>
+      left.recordedAt.localeCompare(right.recordedAt),
+    );
+    const coordinates = chronological.map(
+      (point) => [point.lng, point.lat] as [number, number],
+    );
+    if (coordinates.length > 1) {
+      new LineString(coordinates, {
+        symbol: {
+          lineColor: "#fbbf24",
+          lineWidth: 4,
+          lineOpacity: 0.85,
+        },
+      }).addTo(layer);
+    }
+
+    const latest = coordinates.at(-1);
+    if (latest) map.animateTo({ center: latest, zoom: 16 });
+  }, [history]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -141,6 +192,8 @@ export function DispatcherMap({ onAcknowledgeSos }: DispatcherMapProps) {
   const activeSos = Object.values(sosAlerts)
     .filter((alert) => alert.status === "open")
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const selectedUser = users.find((user) => user.id === selectedUserId);
+  const selectedLocation = selectedUserId ? locations[selectedUserId] : undefined;
 
   return (
     <div className="relative h-full min-h-[420px] overflow-hidden bg-[#17211d]">
@@ -155,6 +208,94 @@ export function DispatcherMap({ onAcknowledgeSos }: DispatcherMapProps) {
       <div className="absolute left-4 top-16 rounded-lg border border-white/10 bg-[#0a1311]/80 px-3 py-2 text-xs text-stone-300 backdrop-blur">
         {Object.keys(locations).length} tracked units
       </div>
+
+      {selectedUser ? (
+        <div className="absolute bottom-4 left-4 z-10 max-h-[70%] w-[min(390px,calc(100%-2rem))] overflow-y-auto rounded-2xl border border-emerald-300/25 bg-[#0a1311]/95 p-4 shadow-2xl backdrop-blur">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300">
+                Unit detail
+              </p>
+              <h3 className="mt-1 font-display text-xl text-stone-100">
+                {selectedUser.fullName}
+              </h3>
+              <p className="mt-1 text-xs text-stone-400">
+                @{selectedUser.username} · {selectedUser.role.replace("_", " ")}
+              </p>
+            </div>
+            <button
+              aria-label="Close user detail"
+              className="rounded-lg px-2 py-1 text-stone-500 hover:bg-white/8 hover:text-stone-200"
+              onClick={onCloseUser}
+              type="button"
+            >
+              ×
+            </button>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+            <Detail
+              label="Presence"
+              value={presence[selectedUserId]?.status === "online" ? "Online" : "Offline"}
+            />
+            <Detail label="Account" value={selectedUser.status} />
+            <Detail
+              label="Latitude"
+              value={selectedLocation ? selectedLocation.lat.toFixed(6) : "No live location"}
+            />
+            <Detail
+              label="Longitude"
+              value={selectedLocation ? selectedLocation.lng.toFixed(6) : "No live location"}
+            />
+            <Detail
+              label="Accuracy"
+              value={
+                selectedLocation?.accuracy !== undefined
+                  ? `${selectedLocation.accuracy.toFixed(1)} m`
+                  : "-"
+              }
+            />
+            <Detail
+              label="Last update"
+              value={selectedLocation ? formatDate(selectedLocation.recordedAt) : "-"}
+            />
+          </div>
+
+          {historyEnabled ? (
+            <button
+              className="mt-4 w-full rounded-xl bg-amber-300 px-4 py-2.5 text-xs font-black uppercase tracking-[0.15em] text-amber-950 disabled:opacity-50"
+              disabled={historyLoading}
+              onClick={() => onLoadHistory(selectedUser.id)}
+              type="button"
+            >
+              {historyLoading ? "Loading history..." : "Load 24 hour history"}
+            </button>
+          ) : null}
+
+          {historyError ? <p className="mt-3 text-xs text-red-300">{historyError}</p> : null}
+          {history.length > 0 ? (
+            <div className="mt-4">
+              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                <span>Location history</span>
+                <span>{history.length} points</span>
+              </div>
+              <div className="mt-2 max-h-44 space-y-1 overflow-y-auto">
+                {history.slice(0, 50).map((point) => (
+                  <div
+                    className="flex items-center justify-between rounded-lg bg-white/[0.035] px-3 py-2 text-[11px]"
+                    key={`${point.recordedAt}-${point.lat}-${point.lng}`}
+                  >
+                    <span className="text-stone-300">
+                      {point.lat.toFixed(5)}, {point.lng.toFixed(5)}
+                    </span>
+                    <span className="text-stone-500">{formatDate(point.recordedAt)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {activeSos.length > 0 ? (
         <div className="absolute right-4 top-4 w-[min(360px,calc(100%-2rem))] rounded-2xl border border-red-300/40 bg-red-950/95 p-4 text-red-50 shadow-2xl shadow-red-950/50 backdrop-blur">
@@ -198,4 +339,20 @@ export function DispatcherMap({ onAcknowledgeSos }: DispatcherMapProps) {
       </div>
     </div>
   );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-white/[0.035] px-3 py-2">
+      <div className="text-[9px] font-bold uppercase tracking-wider text-stone-600">{label}</div>
+      <div className="mt-1 truncate text-stone-300">{value}</div>
+    </div>
+  );
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("id-ID", {
+    dateStyle: "short",
+    timeStyle: "medium",
+  }).format(new Date(value));
 }

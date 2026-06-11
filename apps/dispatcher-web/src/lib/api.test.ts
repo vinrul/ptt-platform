@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAuthStore } from "../features/auth/authStore";
-import { fetchUsers } from "./api";
+import { fetchGpsHistory, fetchUsers } from "./api";
 
 const user = {
   id: "dispatcher-1",
@@ -76,6 +76,20 @@ describe("API access token refresh", () => {
 
     await Promise.all([first, second]);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/auth/refresh"))).toHaveLength(1);
+  });
+
+  it("requests a bounded GPS history window", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse(200, { user, items: [] }),
+    );
+
+    await fetchGpsHistory("expired-access", "field-1");
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]), window.location.origin);
+    expect(requestUrl.pathname).toBe("/api/users/field-1/gps-history");
+    expect(requestUrl.searchParams.get("limit")).toBe("500");
+    expect(requestUrl.searchParams.has("from")).toBe(true);
+    expect(requestUrl.searchParams.has("to")).toBe(true);
   });
 });
 

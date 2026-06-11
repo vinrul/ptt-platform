@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import { UserList } from "./UserList";
 
 describe("UserList", () => {
@@ -30,5 +30,27 @@ describe("UserList", () => {
 
     const names = screen.getAllByText(/Field$/).map((element) => element.textContent);
     expect(names).toEqual(["Bravo Field", "Alpha Field"]);
+  });
+
+  it("opens GPS history for the selected user", () => {
+    const onViewHistory = vi.fn();
+    render(
+      <UserList
+        onViewHistory={onViewHistory}
+        presence={{}}
+        users={[
+          {
+            id: "user-1",
+            username: "field1",
+            fullName: "Alpha Field",
+            role: "field_user",
+            status: "active",
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "View location history for Alpha Field" }));
+    expect(onViewHistory).toHaveBeenCalledWith("user-1");
   });
 });
