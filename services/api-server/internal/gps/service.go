@@ -34,6 +34,13 @@ type Location struct {
 	RecordedAt string   `json:"recordedAt"`
 }
 
+type GroupLocation struct {
+	Location
+	Username string `json:"username"`
+	FullName string `json:"fullName"`
+	Role     string `json:"role"`
+}
+
 type HistoryUser struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
@@ -53,6 +60,21 @@ type Service struct {
 
 func NewService(store *db.Store) *Service {
 	return &Service{store: store}
+}
+
+func (s *Service) IsGroupMember(ctx context.Context, groupID string, userID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	var allowed bool
+	err := s.store.Postgres.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM group_members
+			WHERE group_id = $1 AND user_id = $2
+		)
+	`, groupID, userID).Scan(&allowed)
+	return allowed, err
 }
 
 func (s *Service) Record(ctx context.Context, userID string, update Update) (Location, error) {
@@ -156,6 +178,50 @@ func (s *Service) History(
 		return HistoryResult{}, err
 	}
 	return result, nil
+}
+
+func (s *Service) LatestForGroup(ctx context.Context, groupID string) ([]GroupLocation, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	rows, err := s.store.Postgres.Query(ctx, `
+		SELECT DISTINCT ON (u.id)
+		       u.id, u.username, u.full_name, u.role,
+		       gl.lat, gl.lng, gl.speed, gl.heading, gl.accuracy, gl.recorded_at
+		FROM group_members gm
+		JOIN users u ON u.id = gm.user_id
+		JOIN gps_logs gl ON gl.user_id = u.id
+		WHERE gm.group_id = $1
+		  AND u.status = 'active'
+		ORDER BY u.id, gl.recorded_at DESC
+	`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]GroupLocation, 0)
+	for rows.Next() {
+		var item GroupLocation
+		var recordedAt time.Time
+		if err := rows.Scan(
+			&item.UserID,
+			&item.Username,
+			&item.FullName,
+			&item.Role,
+			&item.Lat,
+			&item.Lng,
+			&item.Speed,
+			&item.Heading,
+			&item.Accuracy,
+			&recordedAt,
+		); err != nil {
+			return nil, err
+		}
+		item.RecordedAt = recordedAt.UTC().Format(time.RFC3339Nano)
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func validate(update Update) error {

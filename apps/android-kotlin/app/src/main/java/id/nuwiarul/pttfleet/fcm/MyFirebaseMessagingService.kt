@@ -38,6 +38,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val type = remoteMessage.data["type"]
         if (type == "ptt_wakeup") {
             val groupId = remoteMessage.data["groupId"]
+            PttWakeNavigation.fromData(remoteMessage.data)?.let { navigation ->
+                PttWakeNavigationStore(applicationContext).save(navigation)
+            }
             Log.d(TAG, "PTT Wakeup notification received for group: $groupId")
 
             // Wake the patrol connection, join the target group, and send one fresh GPS update.

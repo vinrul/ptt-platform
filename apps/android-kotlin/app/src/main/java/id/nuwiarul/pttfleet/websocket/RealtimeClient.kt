@@ -33,6 +33,16 @@ interface RealtimeListener {
     fun onError(message: String)
     fun onGroupJoined(groupId: String, onlineUserIds: Set<String>)
     fun onPresenceUpdated(userId: String, status: String)
+    fun onGpsUpdated(
+        groupId: String,
+        userId: String,
+        lat: Double,
+        lng: Double,
+        speed: Double?,
+        heading: Double?,
+        accuracy: Double?,
+        recordedAt: String,
+    ) = Unit
     fun onPttGranted(sessionId: String, groupId: String)
     fun onPttBusy(groupId: String, speakerUserId: String, queuePosition: Int?)
     fun onPttStarted(sessionId: String, groupId: String, speakerUserId: String)
@@ -277,6 +287,26 @@ class RealtimeClient private constructor() {
                         }
                     }
                 }
+                "gps.updated" -> {
+                    val payload = event.getJSONObject("payload")
+                    val groupId = payload.optString("groupId")
+                    if (groupId.isNotBlank()) {
+                        mainHandler.post {
+                            listeners.forEach {
+                                it.onGpsUpdated(
+                                    groupId = groupId,
+                                    userId = payload.getString("userId"),
+                                    lat = payload.getDouble("lat"),
+                                    lng = payload.getDouble("lng"),
+                                    speed = payload.nullableDouble("speed"),
+                                    heading = payload.nullableDouble("heading"),
+                                    accuracy = payload.nullableDouble("accuracy"),
+                                    recordedAt = payload.getString("recordedAt"),
+                                )
+                            }
+                        }
+                    }
+                }
                 "ptt.granted" -> {
                     val payload = event.getJSONObject("payload")
                     mainHandler.post {
@@ -341,6 +371,9 @@ class RealtimeClient private constructor() {
             listeners.forEach { it.onStatusChanged(newStatus) }
         }
     }
+
+    private fun JSONObject.nullableDouble(name: String): Double? =
+        if (has(name) && !isNull(name)) getDouble(name) else null
 
     @Synchronized
     private fun markReady(webSocket: WebSocket): Boolean {

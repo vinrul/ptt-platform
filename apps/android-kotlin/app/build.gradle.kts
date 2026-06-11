@@ -92,6 +92,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("io.github.jaredmdobson:concentus:1.0.2")
+    implementation("org.maplibre.gl:android-sdk:11.13.5")
 
     // Firebase
     implementation(platform("com.google.firebase:firebase-bom:33.1.0"))

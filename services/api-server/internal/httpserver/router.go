@@ -122,6 +122,7 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	protected.DELETE("/groups/:id", groupHandler.Delete)
 	protected.POST("/groups/:id/members", groupHandler.AddMember)
 	protected.DELETE("/groups/:id/members/:userId", groupHandler.RemoveMember)
+	protected.GET("/groups/:id/locations", gpsHandler.LatestForGroup)
 	protected.GET("/devices", deviceHandler.List)
 	protected.GET("/devices/:id", deviceHandler.Get)
 	protected.PUT("/devices/:id/push-token", deviceHandler.UpdatePushToken)

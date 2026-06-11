@@ -92,7 +92,7 @@ Setelah valid, server mengirim `connection.ready`.
 2. Android mengirim `gps.update`.
 3. Server validasi lat/lng.
 4. Server menyimpan ke `gps_logs`.
-5. Server broadcast `gps.updated` ke dispatcher.
+5. Server broadcast `gps.updated` ke dispatcher dan anggota grup aktif.
 6. Dispatcher update marker MapTalks tanpa reload map.
 
 ## Data Flow SOS

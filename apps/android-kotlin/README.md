@@ -17,6 +17,9 @@ Fitur sampai Phase 9:
 - GPS realtime melalui Fused Location Provider dengan interval adaptif.
 - Permission lokasi baru diminta ketika user menekan `Start GPS tracking`.
 - Update lokasi dikirim sebagai event `gps.update` selama WebSocket terhubung.
+- Tab Map memakai MapLibre Native dengan tile OpenStreetMap. Snapshot posisi
+  terakhir anggota grup dimuat dari REST API dan marker digeser langsung saat
+  menerima `gps.updated`. Detail marker menyediakan aksi private PTT.
 - Jika switch GPS mati, awal transmisi PTT mencoba mengirim satu snapshot lokasi
   tanpa mengaktifkan tracking periodik atau meminta permission baru.
 - Tombol SOS dengan dialog konfirmasi mengirim `sos.create`.
@@ -87,6 +90,11 @@ FCM `ptt_wakeup` akan menghidupkan service, menyambungkan ulang WebSocket,
 bergabung ke `groupId` dari payload, meminta satu lokasi terbaru, lalu mengirim
 `gps.update`. Layar dibangunkan sekitar 8 detik. Android dapat menolak membuka
 Activity otomatis dari background, tetapi wake lock dan notifikasi tetap aktif.
+Wake-up broadcast membuka tab `Home`. Wake-up direct PTT membuka tab
+`Talk Target` dan otomatis memilih user yang mengirim private PTT berdasarkan
+`speakerUserId`, dengan username sebagai fallback. Navigasi wake-up disimpan
+sementara selama maksimal lima menit agar tetap diterapkan ketika Activity baru
+berhasil dibuka setelah service hidup.
 Sebelum reconnect, service memakai access token yang masih valid atau menukar
 refresh token terlebih dahulu. Jika handshake WebSocket ditolak dengan
 `401/403`, service melakukan satu refresh terkoordinasi lalu reconnect dengan

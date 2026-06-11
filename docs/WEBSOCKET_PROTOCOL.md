@@ -183,8 +183,10 @@ Server broadcasts to dispatcher:
 }
 ```
 
-Server menyimpan setiap update ke `gps_logs`, lalu mengirim `gps.updated` hanya
-ke koneksi dengan role `super_admin`, `dispatcher`, atau `supervisor`.
+Server menyimpan setiap update ke `gps_logs`, lalu mengirim `gps.updated` ke
+koneksi operator dan anggota yang sedang join ke grup pengirim. Event untuk
+anggota grup menyertakan `groupId`, sehingga client dapat memperbarui marker
+grup yang tepat tanpa memuat ulang snapshot lokasi.
 
 Validation:
 
@@ -304,6 +306,23 @@ join grup, server mengirim FCM `ptt_wakeup` hanya ke perangkat target agar servi
 Android hidup, WebSocket tersambung, dan target join grup. Frame audio mulai
 diteruskan setelah target berhasil join. Talk lock tetap berlaku per grup dan
 event control serta audio direct hanya dikirim ke speaker dan target.
+
+Payload data FCM:
+
+```json
+{
+  "type": "ptt_wakeup",
+  "groupId": "uuid",
+  "sessionId": "uuid",
+  "mode": "direct",
+  "speakerUserId": "uuid",
+  "speakerUsername": "field1"
+}
+```
+
+Untuk broadcast, `mode` bernilai `broadcast`. Android membuka tab `Home`.
+Untuk direct PTT, Android membuka tab `Talk Target` dan memilih
+`speakerUserId`; `speakerUsername` dipakai sebagai fallback jika diperlukan.
 
 `queue` bersifat opsional dan default `false` untuk kompatibilitas client lama.
 Jika `true` dan grup sedang dipakai, request masuk antrean FIFO maksimal 20

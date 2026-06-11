@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 
 class GroupRepository(
@@ -66,4 +67,45 @@ class GroupRepository(
                 }
             }
         }
+
+    suspend fun latestLocations(session: AuthSession, groupId: String): List<GroupLocation> =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("${session.serverUrl}/api/groups/$groupId/locations")
+                .header("Authorization", "Bearer ${session.accessToken}")
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    throw IllegalStateException(
+                        "Unable to load group locations (HTTP ${response.code})",
+                    )
+                }
+                parseLocations(JSONObject(body).getJSONArray("items"))
+            }
+        }
+
+    private fun parseLocations(items: JSONArray): List<GroupLocation> = buildList {
+        for (index in 0 until items.length()) {
+            val item = items.getJSONObject(index)
+            add(
+                GroupLocation(
+                    userId = item.getString("userId"),
+                    username = item.getString("username"),
+                    fullName = item.getString("fullName"),
+                    role = item.getString("role"),
+                    lat = item.getDouble("lat"),
+                    lng = item.getDouble("lng"),
+                    speed = item.nullableDouble("speed"),
+                    heading = item.nullableDouble("heading"),
+                    accuracy = item.nullableDouble("accuracy"),
+                    recordedAt = item.getString("recordedAt"),
+                ),
+            )
+        }
+    }
+
+    private fun JSONObject.nullableDouble(name: String): Double? =
+        if (has(name) && !isNull(name)) getDouble(name) else null
 }

@@ -18,7 +18,8 @@ Fitur yang tersedia:
 - HTTPS guard untuk production di belakang trusted reverse proxy.
 - Connection registry, presence per user, heartbeat timeout, dan group join.
 - Validasi dan persistence `gps.update` ke PostgreSQL.
-- Broadcast `gps.updated` terbatas ke role operator.
+- Broadcast `gps.updated` ke operator dan anggota yang sedang join pada grup
+  pengirim.
 - Create dan acknowledge SOS melalui WebSocket dengan audit log transaksional.
 - Broadcast `sos.created` dan `sos.acked` terbatas ke role operator.
 - Talk lock in-memory per grup dengan persistence metadata `talk_sessions`.
@@ -75,7 +76,8 @@ Test package WebSocket membuka listener localhost sementara melalui
 8. Pastikan event pertama adalah `connection.ready`, lalu kirim `heartbeat`
    setiap 20-30 detik.
 9. Kirim `gps.update` dari field user dan pastikan row masuk ke `gps_logs`.
-10. Pastikan hanya koneksi operator menerima `gps.updated`.
+10. Pastikan operator dan anggota grup aktif menerima `gps.updated`, sedangkan
+    anggota grup lain tidak menerimanya.
 11. Kirim `sos.create`, pastikan row `sos_events` dan audit `sos.create` dibuat.
 12. Ack dari dispatcher, lalu pastikan status menjadi `ack` dan audit `sos.ack`
     dibuat.

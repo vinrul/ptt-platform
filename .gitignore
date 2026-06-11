@@ -34,3 +34,4 @@ Thumbs.db
 # Firebase / Secrets
 google-services.json
 firebase-service-account.json
+.gocache/

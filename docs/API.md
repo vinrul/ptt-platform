@@ -364,6 +364,29 @@ grup dan privat. Setiap member memuat `role` akun dan `roleInGroup`. Android
 tidak menampilkan akun dengan role `super_admin` atau `dispatcher` sebagai
 target PTT.
 
+### GET /api/groups/:id/locations
+
+Mengembalikan satu posisi GPS terakhir yang tersimpan untuk setiap anggota grup
+aktif yang sudah memiliki data lokasi. `field_user` hanya boleh membaca grup
+tempat user tersebut menjadi anggota.
+
+```json
+{
+  "items": [
+    {
+      "userId": "uuid",
+      "username": "patrol-1",
+      "fullName": "Patrol One",
+      "role": "field_user",
+      "lat": -6.2,
+      "lng": 106.8,
+      "accuracy": 8.5,
+      "recordedAt": "2026-06-12T01:00:00Z"
+    }
+  ]
+}
+```
+
 ### PATCH /api/groups/:id
 
 Request:

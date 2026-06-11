@@ -37,6 +37,7 @@
     <string name="patrol_session">PATROL SESSION</string>
     <string name="tab_home">Home</string>
     <string name="tab_talk_target">Talk Target</string>
+    <string name="tab_map">Map</string>
     <string name="tab_profile">Profile</string>
     <string name="home_broadcast_title">Talk to everyone</string>
     <string name="hold_to_everyone">Hold to talk to everyone</string>
@@ -72,6 +73,18 @@
     <string name="presence_offline">Offline</string>
     <string name="members_loading">Loading group members...</string>
     <string name="members_load_failed">Unable to load group members.</string>
+    <string name="map_title">Group map</string>
+    <string name="map_subtitle">Latest recorded position for each group member.</string>
+    <string name="map_waiting">Waiting for group locations.</string>
+    <string name="map_empty">No member location has been recorded.</string>
+    <string name="map_locations_shown">%1$d latest locations shown.</string>
+    <string name="map_load_failed">Unable to load group locations.</string>
+    <string name="map_user_detail">%1$s (@%2$s)</string>
+    <string name="map_location_detail">Updated %1$s · accuracy %2$s</string>
+    <string name="map_accuracy_unknown">unknown</string>
+    <string name="map_accuracy_meters">%1$.0f m</string>
+    <string name="talk_to_map_user">Talk to this user</string>
+    <string name="openstreetmap_attribution">© OpenStreetMap contributors</string>
     <string name="ptt_ready_private">Private PTT ready for %1$s.</string>
     <string name="ptt_requesting_private">Requesting private channel to %1$s...</string>
     <string name="ptt_ready">Channel ready · hold the button to talk.</string>

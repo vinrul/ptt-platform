@@ -34,13 +34,18 @@ import id.nuwiarul.pttfleet.databinding.DialogChangePasswordBinding
 import id.nuwiarul.pttfleet.groups.GroupRepository
 import id.nuwiarul.pttfleet.groups.GroupMember
 import id.nuwiarul.pttfleet.groups.GroupSummary
+import id.nuwiarul.pttfleet.groups.GroupLocation
+import id.nuwiarul.pttfleet.fcm.PttWakeNavigation
+import id.nuwiarul.pttfleet.fcm.PttWakeNavigationStore
 import id.nuwiarul.pttfleet.location.GpsSample
 import id.nuwiarul.pttfleet.location.LocationTracker
+import id.nuwiarul.pttfleet.map.GroupMapController
 import id.nuwiarul.pttfleet.websocket.ConnectionStatus
 import id.nuwiarul.pttfleet.websocket.RealtimeClient
 import id.nuwiarul.pttfleet.websocket.RealtimeListener
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import org.maplibre.android.MapLibre
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity(), RealtimeListener {
@@ -52,6 +57,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private lateinit var binding: ActivityMainBinding
     private lateinit var sessionManager: SessionManager
     private lateinit var serverSettingsStore: ServerSettingsStore
+    private lateinit var wakeNavigationStore: PttWakeNavigationStore
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
@@ -63,6 +69,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private val groupRepository = GroupRepository(httpClient)
     private val realtimeClient = RealtimeClient.getInstance()
     private lateinit var audioEngine: PttAudioEngine
+    private lateinit var groupMapController: GroupMapController
     private var latestLocation: GpsSample? = null
     private var groups: List<GroupSummary> = emptyList()
     private var groupMembers: List<GroupMember> = emptyList()
@@ -75,6 +82,10 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private var receivedAudioFrames = 0L
     private var pttHeld = false
     private var updatingTrackingSwitch = false
+    private var pendingWakeNavigation: PttWakeNavigation? = null
+    private val loadingGroupMemberIds = mutableSetOf<String>()
+    private val mapLocations = mutableMapOf<String, GroupLocation>()
+    private var selectedMapLocation: GroupLocation? = null
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { permissions ->
@@ -137,12 +148,15 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                 )
             }
         }
+        MapLibre.getInstance(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         applySystemBarInsets()
 
         sessionManager = SessionManager.getInstance(applicationContext)
         serverSettingsStore = ServerSettingsStore(applicationContext)
+        wakeNavigationStore = PttWakeNavigationStore(applicationContext)
+        pendingWakeNavigation = wakeNavigationStore.consume()
         audioEngine = PttAudioEngine(
             onEncodedFrame = { payload ->
                 activePttSessionId?.let { sessionId ->
@@ -156,6 +170,8 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             },
             onError = { message -> runOnUiThread { binding.pttStatusText.text = message } },
         )
+        groupMapController = GroupMapController(binding.groupMapView, ::showMapUserDetail)
+        groupMapController.onCreate(savedInstanceState)
         binding.loginButton.setOnClickListener { login() }
         binding.showPasswordCheck.setOnCheckedChangeListener { _, checked ->
             setPasswordVisible(binding.passwordInput, checked)
@@ -167,7 +183,9 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         binding.logoutButton.setOnClickListener { logout() }
         binding.homeTabButton.setOnClickListener { showTab(SessionTab.HOME) }
         binding.targetTabButton.setOnClickListener { showTab(SessionTab.TARGET) }
+        binding.mapTabButton.setOnClickListener { showTab(SessionTab.MAP) }
         binding.profileTabButton.setOnClickListener { showTab(SessionTab.PROFILE) }
+        binding.mapTalkButton.setOnClickListener { talkToSelectedMapUser() }
         binding.locationTrackingSwitch.setOnCheckedChangeListener { _, checked ->
             if (updatingTrackingSwitch) return@setOnCheckedChangeListener
             if (checked) {
@@ -185,9 +203,11 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                 binding.pttButton.isEnabled = false
                 binding.targetPttButton.isEnabled = false
                 renderGroupMembers(emptyList())
+                clearMapLocations()
                 realtimeClient.joinGroup(group.id)
                 PatrolService.joinGroup(applicationContext, group.id)
                 loadGroupMembers(group.id)
+                loadGroupLocations(group.id)
             }
         }
         configurePttButton(binding.pttButton) { null }
@@ -214,16 +234,20 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        pendingWakeNavigation = wakeNavigationStore.consume() ?: pendingWakeNavigation
+        applyPendingWakeNavigation()
     }
 
     override fun onStart() {
         super.onStart()
+        groupMapController.onStart()
         isVisible = true
         realtimeClient.addListener(this)
     }
 
     override fun onResume() {
         super.onResume()
+        groupMapController.onResume()
         if (PatrolService.isTrackingEnabled(applicationContext)) {
             setTrackingSwitchChecked(true)
             val latest = PatrolService.latestLocation
@@ -246,19 +270,32 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
 
     override fun onPause() {
         PatrolService.onLocationChangedListener = null
+        groupMapController.onPause()
         super.onPause()
     }
 
     override fun onStop() {
         realtimeClient.removeListener(this)
         isVisible = false
+        groupMapController.onStop()
         super.onStop()
     }
 
     override fun onDestroy() {
         AudioRouting.setSpeakerphoneOn(applicationContext, false)
         audioEngine.release()
+        groupMapController.onDestroy()
         super.onDestroy()
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        groupMapController.onLowMemory()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        groupMapController.onSaveInstanceState(outState)
     }
 
     private fun login() {
@@ -300,7 +337,9 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             session.user.role.replace('_', ' '),
         )
         binding.connectionDetailText.setText(R.string.realtime_opening)
-        showTab(SessionTab.HOME)
+        showTab(
+            if (pendingWakeNavigation?.isDirect == true) SessionTab.TARGET else SessionTab.HOME,
+        )
 
         val isWakeup = intent?.getBooleanExtra("is_wakeup", false) == true
         if (!isWakeup) {
@@ -432,6 +471,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                         android.R.layout.simple_spinner_dropdown_item,
                         items.map { it.name },
                     )
+                    applyPendingWakeNavigation()
                     binding.pttStatusText.setText(
                         if (items.isEmpty()) R.string.no_groups else R.string.channel_joining,
                     )
@@ -441,33 +481,134 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun loadGroupMembers(groupId: String) {
+        if (!loadingGroupMemberIds.add(groupId)) return
         binding.pttStatusText.setText(R.string.members_loading)
         lifecycleScope.launch {
-            var activeSession: AuthSession? = null
-            runCatching {
-                sessionManager.validSession()
-                    ?.also { activeSession = it }
-                    ?.let { groupRepository.members(it, groupId) }
-                    ?: throw IllegalStateException(getString(R.string.login_failed))
-            }.onSuccess { members ->
+            try {
+                var activeSession: AuthSession? = null
+                runCatching {
+                    sessionManager.validSession()
+                        ?.also { activeSession = it }
+                        ?.let { groupRepository.members(it, groupId) }
+                        ?: throw IllegalStateException(getString(R.string.login_failed))
+                }.onSuccess { members ->
                     if (groups.getOrNull(binding.groupSpinner.selectedItemPosition)?.id != groupId) {
                         return@onSuccess
                     }
+                    val wakeNavigation = pendingWakeNavigation
+                        ?.takeIf { it.isDirect && it.groupId == groupId }
+                    val wakeTarget = wakeNavigation?.let { wake ->
+                        members.firstOrNull { it.userId == wake.speakerUserId } ?:
+                            members.firstOrNull { it.username == wake.speakerUsername }
+                    }
                     groupMembers = members.filter {
                         it.userId != activeSession?.user?.id &&
-                            it.role != "super_admin" &&
-                            it.role != "dispatcher"
+                            (
+                                (it.role != "super_admin" && it.role != "dispatcher") ||
+                                    it.userId == wakeTarget?.userId
+                                )
+                    }
+                    if (wakeTarget != null) {
+                        targetUserId = wakeTarget.userId
+                        showTab(SessionTab.TARGET)
+                        pendingWakeNavigation = null
                     }
                     renderGroupMembers(groupMembers)
                     if (joinedGroupId == groupId) {
                         updateReadyStatus()
                     }
-                }
-                .onFailure {
+                }.onFailure {
                     groupMembers = emptyList()
                     renderGroupMembers(emptyList())
                     binding.pttStatusText.setText(R.string.members_load_failed)
                 }
+            } finally {
+                loadingGroupMemberIds -= groupId
+            }
+        }
+    }
+
+    private fun loadGroupLocations(groupId: String) {
+        binding.mapStatusText.setText(R.string.map_waiting)
+        lifecycleScope.launch {
+            runCatching {
+                val session = sessionManager.validSession()
+                    ?: throw IllegalStateException(getString(R.string.login_failed))
+                groupRepository.latestLocations(session, groupId)
+            }.onSuccess { items ->
+                if (groups.getOrNull(binding.groupSpinner.selectedItemPosition)?.id != groupId) {
+                    return@onSuccess
+                }
+                val visibleItems = items.filter {
+                    it.role != "super_admin" && it.role != "dispatcher"
+                }
+                mapLocations.clear()
+                visibleItems.forEach { mapLocations[it.userId] = it }
+                groupMapController.replaceLocations(visibleItems)
+                binding.mapStatusText.text = if (visibleItems.isEmpty()) {
+                    getString(R.string.map_empty)
+                } else {
+                    getString(R.string.map_locations_shown, visibleItems.size)
+                }
+            }.onFailure {
+                binding.mapStatusText.setText(R.string.map_load_failed)
+            }
+        }
+    }
+
+    private fun clearMapLocations() {
+        mapLocations.clear()
+        selectedMapLocation = null
+        binding.mapUserDetailPanel.visibility = View.GONE
+        binding.mapStatusText.setText(R.string.map_waiting)
+        groupMapController.clear()
+    }
+
+    private fun showMapUserDetail(location: GroupLocation) {
+        selectedMapLocation = location
+        binding.mapUserDetailPanel.visibility = View.VISIBLE
+        binding.mapUserNameText.text = getString(
+            R.string.map_user_detail,
+            location.fullName,
+            location.username,
+        )
+        val accuracy = location.accuracy?.let {
+            getString(R.string.map_accuracy_meters, it)
+        } ?: getString(R.string.map_accuracy_unknown)
+        binding.mapUserLocationText.text = getString(
+            R.string.map_location_detail,
+            location.recordedAt,
+            accuracy,
+        )
+        binding.mapTalkButton.isEnabled = groupMembers.any { it.userId == location.userId }
+    }
+
+    private fun talkToSelectedMapUser() {
+        val location = selectedMapLocation ?: return
+        if (groupMembers.none { it.userId == location.userId }) return
+        targetUserId = location.userId
+        renderGroupMembers(groupMembers)
+        showTab(SessionTab.TARGET)
+    }
+
+    private fun applyPendingWakeNavigation() {
+        val navigation = pendingWakeNavigation ?: return
+        showTab(if (navigation.isDirect) SessionTab.TARGET else SessionTab.HOME)
+        val groupIndex = groups.indexOfFirst { it.id == navigation.groupId }
+        if (groupIndex < 0) return
+
+        val currentGroupId = groups.getOrNull(binding.groupSpinner.selectedItemPosition)?.id
+        if (currentGroupId != navigation.groupId) {
+            binding.groupSpinner.setSelection(groupIndex)
+            if (!navigation.isDirect) {
+                pendingWakeNavigation = null
+            }
+            return
+        }
+        if (navigation.isDirect) {
+            loadGroupMembers(navigation.groupId)
+        } else {
+            pendingWakeNavigation = null
         }
     }
 
@@ -560,11 +701,13 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         button.setOnTouchListener { _, motionEvent ->
             when (motionEvent.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    button.isPressed = true
                     pttHeld = true
                     requestPttStart(targetUserId())
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    button.isPressed = false
                     pttHeld = false
                     stopPtt()
                     true
@@ -587,6 +730,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private fun showTab(tab: SessionTab) {
         binding.homePanel.visibility = if (tab == SessionTab.HOME) View.VISIBLE else View.GONE
         binding.targetPanel.visibility = if (tab == SessionTab.TARGET) View.VISIBLE else View.GONE
+        binding.mapPanel.visibility = if (tab == SessionTab.MAP) View.VISIBLE else View.GONE
         binding.profilePanel.visibility = if (tab == SessionTab.PROFILE) View.VISIBLE else View.GONE
         binding.pttStatusText.visibility =
             if (tab == SessionTab.PROFILE) View.GONE else View.VISIBLE
@@ -595,6 +739,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         val idleColor = ContextCompat.getColor(this, R.color.fleet_muted)
         binding.homeTabButton.setTextColor(if (tab == SessionTab.HOME) selectedColor else idleColor)
         binding.targetTabButton.setTextColor(if (tab == SessionTab.TARGET) selectedColor else idleColor)
+        binding.mapTabButton.setTextColor(if (tab == SessionTab.MAP) selectedColor else idleColor)
         binding.profileTabButton.setTextColor(if (tab == SessionTab.PROFILE) selectedColor else idleColor)
         if (tab != SessionTab.PROFILE) {
             updateReadyStatus()
@@ -602,6 +747,8 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun stopPtt() {
+        binding.pttButton.isPressed = false
+        binding.targetPttButton.isPressed = false
         audioEngine.stopCapture()
         activePttSessionId?.let { realtimeClient.stopPtt(it) }
         if (activePttSessionId == null) {
@@ -730,6 +877,39 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         }
         if (groupMembers.any { it.userId == userId }) {
             renderGroupMembers(groupMembers)
+        }
+    }
+
+    override fun onGpsUpdated(
+        groupId: String,
+        userId: String,
+        lat: Double,
+        lng: Double,
+        speed: Double?,
+        heading: Double?,
+        accuracy: Double?,
+        recordedAt: String,
+    ) {
+        if (groupId != joinedGroupId) return
+        val existing = mapLocations[userId]
+        val member = groupMembers.firstOrNull { it.userId == userId }
+        if (existing == null && member == null) return
+        val item = GroupLocation(
+            userId = userId,
+            username = member?.username ?: existing!!.username,
+            fullName = member?.fullName ?: existing!!.fullName,
+            role = member?.role ?: existing!!.role,
+            lat = lat,
+            lng = lng,
+            speed = speed,
+            heading = heading,
+            accuracy = accuracy,
+            recordedAt = recordedAt,
+        )
+        mapLocations[userId] = item
+        groupMapController.updateLocation(item)
+        if (selectedMapLocation?.userId == userId) {
+            showMapUserDetail(item)
         }
     }
 
@@ -889,5 +1069,6 @@ private class GroupSelectionListener(
 private enum class SessionTab {
     HOME,
     TARGET,
+    MAP,
     PROFILE,
 }

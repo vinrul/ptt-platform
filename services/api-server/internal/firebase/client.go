@@ -39,7 +39,15 @@ func NewClient(credentialsPath string) (*Client, error) {
 	}, nil
 }
 
-func (c *Client) SendPttWakeup(ctx context.Context, token string, groupId string, sessionId string) error {
+type PttWakeup struct {
+	GroupID         string
+	SessionID       string
+	Mode            string
+	SpeakerUserID   string
+	SpeakerUsername string
+}
+
+func (c *Client) SendPttWakeup(ctx context.Context, token string, wakeup PttWakeup) error {
 	if c == nil || c.fcm == nil {
 		return nil
 	}
@@ -49,13 +57,20 @@ func (c *Client) SendPttWakeup(ctx context.Context, token string, groupId string
 		Android: &messaging.AndroidConfig{
 			Priority: "high",
 		},
-		Data: map[string]string{
-			"type":      "ptt_wakeup",
-			"groupId":   groupId,
-			"sessionId": sessionId,
-		},
+		Data: pttWakeupData(wakeup),
 	}
 
 	_, err := c.fcm.Send(ctx, message)
 	return err
+}
+
+func pttWakeupData(wakeup PttWakeup) map[string]string {
+	return map[string]string{
+		"type":            "ptt_wakeup",
+		"groupId":         wakeup.GroupID,
+		"sessionId":       wakeup.SessionID,
+		"mode":            wakeup.Mode,
+		"speakerUserId":   wakeup.SpeakerUserID,
+		"speakerUsername": wakeup.SpeakerUsername,
+	}
 }

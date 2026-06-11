@@ -275,6 +275,7 @@ func (h *Handler) grantPTT(connection *Connection, session ptt.Session, requestI
 		h.triggerFcmDirectPttWakeup(
 			session.GroupID,
 			session.SpeakerUserID,
+			connection.Username,
 			session.TargetUserID,
 			session.ID,
 		)
@@ -296,6 +297,7 @@ func (h *Handler) handlePTTCancel(connection *Connection, event Event) {
 func (h *Handler) triggerFcmDirectPttWakeup(
 	groupID string,
 	speakerUserID string,
+	speakerUsername string,
 	targetUserID string,
 	sessionID string,
 ) {
@@ -320,7 +322,13 @@ func (h *Handler) triggerFcmDirectPttWakeup(
 			if h.hub.UserHasJoinedGroup(targetUserID, groupID) {
 				return
 			}
-			if err := h.firebase.SendPttWakeup(ctx, target.PushToken, groupID, sessionID); err != nil {
+			if err := h.firebase.SendPttWakeup(ctx, target.PushToken, firebase.PttWakeup{
+				GroupID:         groupID,
+				SessionID:       sessionID,
+				Mode:            "direct",
+				SpeakerUserID:   speakerUserID,
+				SpeakerUsername: speakerUsername,
+			}); err != nil {
 				log.Printf("[Firebase] Error sending direct PTT wakeup to user %s: %v", targetUserID, err)
 			} else {
 				log.Printf("[Firebase] Successfully sent direct PTT wakeup to user %s", targetUserID)
@@ -346,7 +354,13 @@ func (h *Handler) triggerFcmPttWakeup(groupID string, speakerUserID string, sess
 
 		for _, target := range targets {
 			if !h.hub.UserHasJoinedGroup(target.UserID, groupID) {
-				err := h.firebase.SendPttWakeup(ctx, target.PushToken, groupID, sessionID)
+				err := h.firebase.SendPttWakeup(ctx, target.PushToken, firebase.PttWakeup{
+					GroupID:         groupID,
+					SessionID:       sessionID,
+					Mode:            "broadcast",
+					SpeakerUserID:   speakerUserID,
+					SpeakerUsername: "",
+				})
 				if err != nil {
 					log.Printf("[Firebase] Error sending PTT wakeup to user %s (token: %s): %v", target.UserID, target.PushToken, err)
 				} else {
@@ -572,6 +586,18 @@ func (h *Handler) handleGPSUpdate(c *gin.Context, connection *Connection, event 
 	}
 
 	h.hub.BroadcastToOperators(NewEvent("gps.updated", event.RequestID, location))
+	for _, groupID := range connection.JoinedGroupIDs() {
+		h.hub.BroadcastToGroup(groupID, NewEvent("gps.updated", event.RequestID, map[string]any{
+			"groupId":    groupID,
+			"userId":     location.UserID,
+			"lat":        location.Lat,
+			"lng":        location.Lng,
+			"speed":      location.Speed,
+			"heading":    location.Heading,
+			"accuracy":   location.Accuracy,
+			"recordedAt": location.RecordedAt,
+		}))
+	}
 }
 
 func (h *Handler) handleGroupJoin(c *gin.Context, connection *Connection, event Event) {

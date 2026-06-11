@@ -88,6 +88,7 @@ func (c *Connection) TouchHeartbeat() {
 
 func (c *Connection) JoinGroup(groupID string) {
 	c.mu.Lock()
+	clear(c.JoinedGroups)
 	c.JoinedGroups[groupID] = struct{}{}
 	c.mu.Unlock()
 }

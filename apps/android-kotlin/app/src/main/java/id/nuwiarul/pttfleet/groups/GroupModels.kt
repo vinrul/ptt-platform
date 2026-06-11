@@ -13,3 +13,16 @@ data class GroupMember(
     val role: String,
     val roleInGroup: String,
 )
+
+data class GroupLocation(
+    val userId: String,
+    val username: String,
+    val fullName: String,
+    val role: String,
+    val lat: Double,
+    val lng: Double,
+    val speed: Double?,
+    val heading: Double?,
+    val accuracy: Double?,
+    val recordedAt: String,
+)

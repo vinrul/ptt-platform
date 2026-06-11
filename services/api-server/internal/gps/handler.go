@@ -20,6 +20,38 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
+func (h *Handler) LatestForGroup(c *gin.Context) {
+	claims, err := auth.ClaimsFromContext(c)
+	if err != nil {
+		apiutil.Error(c, http.StatusUnauthorized, "unauthorized", "Authentication is required", nil)
+		return
+	}
+
+	groupID := c.Param("id")
+	if claims.Role == "field_user" {
+		allowed, membershipErr := h.service.IsGroupMember(
+			c.Request.Context(),
+			groupID,
+			claims.Subject,
+		)
+		if membershipErr != nil {
+			apiutil.Error(c, http.StatusInternalServerError, "server_error", "Unable to validate group membership", nil)
+			return
+		}
+		if !allowed {
+			apiutil.Error(c, http.StatusForbidden, "forbidden", "User is not a member of this group", nil)
+			return
+		}
+	}
+
+	items, err := h.service.LatestForGroup(c.Request.Context(), groupID)
+	if err != nil {
+		apiutil.Error(c, http.StatusInternalServerError, "server_error", "Unable to load group locations", nil)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
 func (h *Handler) History(c *gin.Context) {
 	claims, err := auth.ClaimsFromContext(c)
 	if err != nil {
