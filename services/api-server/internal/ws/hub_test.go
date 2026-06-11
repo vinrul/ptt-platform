@@ -63,6 +63,10 @@ func TestHubFindsUserJoinedToGroup(t *testing.T) {
 	if hub.UserHasJoinedGroup("user-2", "group-1") {
 		t.Fatal("did not expect unrelated user in joined group")
 	}
+	onlineUserIDs := hub.OnlineUserIDsInGroup("group-1")
+	if len(onlineUserIDs) != 1 || onlineUserIDs[0] != "user-1" {
+		t.Fatalf("expected online snapshot [user-1], got %#v", onlineUserIDs)
+	}
 }
 
 func TestHeartbeatWindowIsNinetySeconds(t *testing.T) {

@@ -8,22 +8,31 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.method.HideReturnsTransformationMethod
+import android.text.method.PasswordTransformationMethod
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ArrayAdapter
+import android.widget.RadioButton
 import androidx.appcompat.app.AlertDialog
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import id.nuwiarul.pttfleet.auth.AuthRepository
 import id.nuwiarul.pttfleet.auth.AuthSession
 import id.nuwiarul.pttfleet.auth.SecureTokenStore
+import id.nuwiarul.pttfleet.auth.ServerSettingsStore
 import id.nuwiarul.pttfleet.audio.PttAudioEngine
 import id.nuwiarul.pttfleet.audio.AudioRouting
 import id.nuwiarul.pttfleet.databinding.ActivityMainBinding
+import id.nuwiarul.pttfleet.databinding.DialogChangePasswordBinding
 import id.nuwiarul.pttfleet.groups.GroupRepository
+import id.nuwiarul.pttfleet.groups.GroupMember
 import id.nuwiarul.pttfleet.groups.GroupSummary
 import id.nuwiarul.pttfleet.location.GpsSample
 import id.nuwiarul.pttfleet.location.LocationTracker
@@ -42,10 +51,13 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var tokenStore: SecureTokenStore
+    private lateinit var serverSettingsStore: ServerSettingsStore
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
-        .pingInterval(30, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
     private val authRepository = AuthRepository(httpClient)
     private val groupRepository = GroupRepository(httpClient)
@@ -53,8 +65,12 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private lateinit var audioEngine: PttAudioEngine
     private var latestLocation: GpsSample? = null
     private var groups: List<GroupSummary> = emptyList()
+    private var groupMembers: List<GroupMember> = emptyList()
+    private val onlineUserIds = mutableSetOf<String>()
     private var joinedGroupId: String? = null
+    private var targetUserId: String? = null
     private var activePttSessionId: String? = null
+    private var pendingPttGroupId: String? = null
     private var audioSequence = 0L
     private var receivedAudioFrames = 0L
     private var pttHeld = false
@@ -87,10 +103,13 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         val locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
 
-        if (locationGranted) {
+        if (!locationGranted) {
+            binding.locationStatusText.setText(R.string.location_permission_denied)
+        } else if (PatrolService.isTrackingEnabled(applicationContext)) {
             startTracking()
         } else {
-            binding.locationStatusText.setText(R.string.location_permission_denied)
+            setTrackingSwitchChecked(false)
+            binding.locationStatusText.setText(R.string.location_stopped)
         }
 
         if (recordAudioGranted) {
@@ -120,8 +139,10 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         }
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        applySystemBarInsets()
 
         tokenStore = SecureTokenStore(applicationContext)
+        serverSettingsStore = ServerSettingsStore(applicationContext)
         audioEngine = PttAudioEngine(
             onEncodedFrame = { payload ->
                 activePttSessionId?.let { sessionId ->
@@ -136,7 +157,17 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             onError = { message -> runOnUiThread { binding.pttStatusText.text = message } },
         )
         binding.loginButton.setOnClickListener { login() }
+        binding.showPasswordCheck.setOnCheckedChangeListener { _, checked ->
+            setPasswordVisible(binding.passwordInput, checked)
+        }
+        binding.settingsButton.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+        binding.changePasswordButton.setOnClickListener { showChangePasswordDialog() }
         binding.logoutButton.setOnClickListener { logout() }
+        binding.homeTabButton.setOnClickListener { showTab(SessionTab.HOME) }
+        binding.targetTabButton.setOnClickListener { showTab(SessionTab.TARGET) }
+        binding.profileTabButton.setOnClickListener { showTab(SessionTab.PROFILE) }
         binding.locationTrackingSwitch.setOnCheckedChangeListener { _, checked ->
             if (updatingTrackingSwitch) return@setOnCheckedChangeListener
             if (checked) {
@@ -149,28 +180,35 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         binding.groupSpinner.onItemSelectedListener = GroupSelectionListener { position ->
             groups.getOrNull(position)?.let { group ->
                 joinedGroupId = null
+                targetUserId = null
+                onlineUserIds.clear()
                 binding.pttButton.isEnabled = false
+                binding.targetPttButton.isEnabled = false
+                renderGroupMembers(emptyList())
                 realtimeClient.joinGroup(group.id)
                 PatrolService.joinGroup(applicationContext, group.id)
+                tokenStore.load()?.let { loadGroupMembers(it, group.id) }
             }
         }
-        binding.pttButton.setOnTouchListener { _, motionEvent ->
-            when (motionEvent.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    pttHeld = true
-                    requestPttStart()
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    pttHeld = false
-                    stopPtt()
-                    true
-                }
-                else -> false
-            }
-        }
+        configurePttButton(binding.pttButton) { null }
+        configurePttButton(binding.targetPttButton) { targetUserId }
 
         tokenStore.load()?.let { showSession(it) } ?: showLogin()
+    }
+
+    private fun applySystemBarInsets() {
+        val navigationPadding = resources.getDimensionPixelSize(R.dimen.bottom_navigation_padding)
+        ViewCompat.setOnApplyWindowInsetsListener(binding.rootLayout) { _, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            binding.bottomNavigation.updatePadding(
+                left = navigationPadding,
+                top = navigationPadding,
+                right = navigationPadding,
+                bottom = navigationPadding + systemBars.bottom,
+            )
+            insets
+        }
+        ViewCompat.requestApplyInsets(binding.rootLayout)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -186,7 +224,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
 
     override fun onResume() {
         super.onResume()
-        if (PatrolService.isTrackingActive) {
+        if (PatrolService.isTrackingEnabled(applicationContext)) {
             setTrackingSwitchChecked(true)
             val latest = PatrolService.latestLocation
             if (latest != null) {
@@ -224,10 +262,10 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun login() {
-        val serverUrl = binding.serverUrlInput.text.toString()
+        val serverUrl = serverSettingsStore.load(getString(R.string.default_server_url))
         val username = binding.usernameInput.text.toString().trim()
         val password = binding.passwordInput.text.toString()
-        if (serverUrl.isBlank() || username.isBlank() || password.isBlank()) {
+        if (username.isBlank() || password.isBlank()) {
             showLoginError(getString(R.string.login_fields_required))
             return
         }
@@ -249,9 +287,12 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun showSession(session: AuthSession) {
-        binding.serverUrlInput.setText(session.serverUrl)
+        binding.settingsButton.visibility = View.GONE
+        binding.loginTitle.visibility = View.GONE
+        binding.loginSubtitle.visibility = View.GONE
         binding.loginPanel.visibility = View.GONE
         binding.sessionPanel.visibility = View.VISIBLE
+        binding.bottomNavigation.visibility = View.VISIBLE
         binding.userNameText.text = session.user.fullName
         binding.userRoleText.text = getString(
             R.string.user_identity,
@@ -259,6 +300,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             session.user.role.replace('_', ' '),
         )
         binding.connectionDetailText.setText(R.string.realtime_opening)
+        showTab(SessionTab.HOME)
 
         realtimeClient.connect(session)
 
@@ -282,12 +324,21 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun showLogin() {
+        binding.settingsButton.visibility = View.VISIBLE
+        binding.loginTitle.visibility = View.VISIBLE
+        binding.loginSubtitle.visibility = View.VISIBLE
         binding.loginPanel.visibility = View.VISIBLE
         binding.sessionPanel.visibility = View.GONE
+        binding.bottomNavigation.visibility = View.GONE
         binding.loginError.visibility = View.GONE
         groups = emptyList()
+        groupMembers = emptyList()
+        onlineUserIds.clear()
         joinedGroupId = null
+        targetUserId = null
+        renderGroupMembers(emptyList())
         binding.pttButton.isEnabled = false
+        binding.targetPttButton.isEnabled = false
     }
 
     private fun logout() {
@@ -297,7 +348,74 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         PatrolService.stop(applicationContext)
         tokenStore.clear()
         binding.passwordInput.text?.clear()
+        binding.showPasswordCheck.isChecked = false
         showLogin()
+    }
+
+    private fun showChangePasswordDialog() {
+        val session = tokenStore.load() ?: return
+        val dialogBinding = DialogChangePasswordBinding.inflate(layoutInflater)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.change_password_title)
+            .setView(dialogBinding.root)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.save_password, null)
+            .create()
+
+        dialogBinding.showPasswordsCheck.setOnCheckedChangeListener { _, checked ->
+            setPasswordVisible(dialogBinding.currentPasswordInput, checked)
+            setPasswordVisible(dialogBinding.newPasswordInput, checked)
+            setPasswordVisible(dialogBinding.confirmPasswordInput, checked)
+        }
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val currentPassword = dialogBinding.currentPasswordInput.text.toString()
+                val newPassword = dialogBinding.newPasswordInput.text.toString()
+                val confirmation = dialogBinding.confirmPasswordInput.text.toString()
+                val validationMessage = when {
+                    currentPassword.isBlank() -> getString(R.string.current_password_required)
+                    newPassword.length < 8 -> getString(R.string.password_min_length)
+                    newPassword != confirmation -> getString(R.string.password_confirmation_mismatch)
+                    else -> null
+                }
+                if (validationMessage != null) {
+                    dialogBinding.changePasswordError.text = validationMessage
+                    dialogBinding.changePasswordError.visibility = View.VISIBLE
+                    return@setOnClickListener
+                }
+
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+                dialogBinding.changePasswordError.visibility = View.GONE
+                lifecycleScope.launch {
+                    runCatching {
+                        authRepository.changePassword(session, currentPassword, newPassword)
+                    }.onSuccess {
+                        dialog.dismiss()
+                        AlertDialog.Builder(this@MainActivity)
+                            .setMessage(R.string.password_changed)
+                            .setPositiveButton(android.R.string.ok) { _, _ -> logout() }
+                            .setCancelable(false)
+                            .show()
+                    }.onFailure { error ->
+                        dialogBinding.changePasswordError.text =
+                            error.message ?: getString(R.string.login_failed)
+                        dialogBinding.changePasswordError.visibility = View.VISIBLE
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun setPasswordVisible(input: android.widget.EditText, visible: Boolean) {
+        val cursor = input.selectionStart
+        input.transformationMethod = if (visible) {
+            HideReturnsTransformationMethod.getInstance()
+        } else {
+            PasswordTransformationMethod.getInstance()
+        }
+        input.setSelection(cursor.coerceAtLeast(0))
     }
 
     private fun loadGroups(session: AuthSession) {
@@ -318,7 +436,83 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         }
     }
 
-    private fun requestPttStart() {
+    private fun loadGroupMembers(session: AuthSession, groupId: String) {
+        binding.pttStatusText.setText(R.string.members_loading)
+        lifecycleScope.launch {
+            runCatching { groupRepository.members(session, groupId) }
+                .onSuccess { members ->
+                    if (groups.getOrNull(binding.groupSpinner.selectedItemPosition)?.id != groupId) {
+                        return@onSuccess
+                    }
+                    groupMembers = members.filter {
+                        it.userId != session.user.id &&
+                            it.role != "super_admin" &&
+                            it.role != "dispatcher"
+                    }
+                    renderGroupMembers(groupMembers)
+                    if (joinedGroupId == groupId) {
+                        updateReadyStatus()
+                    }
+                }
+                .onFailure {
+                    groupMembers = emptyList()
+                    renderGroupMembers(emptyList())
+                    binding.pttStatusText.setText(R.string.members_load_failed)
+                }
+        }
+    }
+
+    private fun renderGroupMembers(members: List<GroupMember>) {
+        binding.groupMembersList.setOnCheckedChangeListener(null)
+        binding.groupMembersList.removeAllViews()
+
+        members.forEach { member ->
+            val isOnline = member.userId in onlineUserIds
+            binding.groupMembersList.addView(
+                RadioButton(this).apply {
+                    id = View.generateViewId()
+                    text = getString(
+                        R.string.talk_to_user,
+                        member.fullName,
+                        member.username,
+                        getString(
+                            if (isOnline) R.string.presence_online else R.string.presence_offline,
+                        ),
+                    )
+                    setTextColor(
+                        ContextCompat.getColor(
+                            this@MainActivity,
+                            if (isOnline) R.color.fleet_primary else R.color.fleet_muted,
+                        ),
+                    )
+                    tag = member.userId
+                    isChecked = targetUserId == member.userId
+                },
+            )
+        }
+        binding.groupMembersList.setOnCheckedChangeListener { group, checkedId ->
+            targetUserId = group.findViewById<RadioButton>(checkedId)?.tag as? String
+            updateTargetButton()
+            updateReadyStatus()
+        }
+        updateTargetButton()
+    }
+
+    private fun selectedTargetName(): String? =
+        targetUserId?.let { selectedId ->
+            groupMembers.firstOrNull { it.userId == selectedId }?.fullName
+        }
+
+    private fun updateReadyStatus() {
+        val targetName = selectedTargetName()
+        binding.pttStatusText.text = when {
+            binding.targetPanel.visibility != View.VISIBLE -> getString(R.string.ptt_ready)
+            targetName == null -> getString(R.string.select_target_first)
+            else -> getString(R.string.ptt_ready_private, targetName)
+        }
+    }
+
+    private fun requestPttStart(requestedTargetUserId: String?) {
         val groupId = joinedGroupId
         if (groupId == null) {
             binding.pttStatusText.setText(R.string.channel_not_ready)
@@ -331,14 +525,81 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        binding.pttStatusText.setText(R.string.ptt_requesting)
-        realtimeClient.startPtt(groupId)
+        if (binding.targetPanel.visibility == View.VISIBLE && requestedTargetUserId == null) {
+            binding.pttStatusText.setText(R.string.select_target_first)
+            return
+        }
+        val targetName = groupMembers
+            .firstOrNull { it.userId == requestedTargetUserId }
+            ?.fullName
+        binding.pttStatusText.text = if (targetName == null) {
+            getString(R.string.ptt_requesting)
+        } else {
+            getString(R.string.ptt_requesting_private, targetName)
+        }
+        pendingPttGroupId = groupId
+        if (!realtimeClient.startPtt(groupId, requestedTargetUserId)) {
+            pendingPttGroupId = null
+            binding.pttStatusText.setText(R.string.channel_not_ready)
+        }
+    }
+
+    private fun configurePttButton(
+        button: View,
+        targetUserId: () -> String?,
+    ) {
+        button.setOnTouchListener { _, motionEvent ->
+            when (motionEvent.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pttHeld = true
+                    requestPttStart(targetUserId())
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    pttHeld = false
+                    stopPtt()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun updateTargetButton() {
+        val targetName = selectedTargetName()
+        binding.targetPttButton.isEnabled = joinedGroupId != null && targetName != null
+        binding.targetPttButton.text = if (targetName == null) {
+            getString(R.string.select_target_first)
+        } else {
+            getString(R.string.hold_to_target, targetName)
+        }
+    }
+
+    private fun showTab(tab: SessionTab) {
+        binding.homePanel.visibility = if (tab == SessionTab.HOME) View.VISIBLE else View.GONE
+        binding.targetPanel.visibility = if (tab == SessionTab.TARGET) View.VISIBLE else View.GONE
+        binding.profilePanel.visibility = if (tab == SessionTab.PROFILE) View.VISIBLE else View.GONE
+        binding.pttStatusText.visibility =
+            if (tab == SessionTab.PROFILE) View.GONE else View.VISIBLE
+
+        val selectedColor = ContextCompat.getColor(this, R.color.fleet_primary)
+        val idleColor = ContextCompat.getColor(this, R.color.fleet_muted)
+        binding.homeTabButton.setTextColor(if (tab == SessionTab.HOME) selectedColor else idleColor)
+        binding.targetTabButton.setTextColor(if (tab == SessionTab.TARGET) selectedColor else idleColor)
+        binding.profileTabButton.setTextColor(if (tab == SessionTab.PROFILE) selectedColor else idleColor)
+        if (tab != SessionTab.PROFILE) {
+            updateReadyStatus()
+        }
     }
 
     private fun stopPtt() {
         audioEngine.stopCapture()
         activePttSessionId?.let { realtimeClient.stopPtt(it) }
+        if (activePttSessionId == null) {
+            pendingPttGroupId?.let { realtimeClient.cancelPtt(it) }
+        }
         activePttSessionId = null
+        pendingPttGroupId = null
         audioSequence = 0
         AudioRouting.setSpeakerphoneOn(applicationContext, false)
     }
@@ -429,6 +690,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             stopPtt()
             joinedGroupId = null
             binding.pttButton.isEnabled = false
+            binding.targetPttButton.isEnabled = false
         }
     }
 
@@ -441,13 +703,29 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         binding.connectionDetailText.text = message
     }
 
-    override fun onGroupJoined(groupId: String) {
+    override fun onGroupJoined(groupId: String, onlineUserIds: Set<String>) {
         joinedGroupId = groupId
+        this.onlineUserIds.clear()
+        this.onlineUserIds.addAll(onlineUserIds)
+        renderGroupMembers(groupMembers)
         binding.pttButton.isEnabled = true
-        binding.pttStatusText.setText(R.string.ptt_ready)
+        updateTargetButton()
+        updateReadyStatus()
+    }
+
+    override fun onPresenceUpdated(userId: String, status: String) {
+        if (status == "online") {
+            onlineUserIds += userId
+        } else {
+            onlineUserIds -= userId
+        }
+        if (groupMembers.any { it.userId == userId }) {
+            renderGroupMembers(groupMembers)
+        }
     }
 
     override fun onPttGranted(sessionId: String, groupId: String) {
+        pendingPttGroupId = null
         if (!pttHeld || joinedGroupId != groupId) {
             realtimeClient.stopPtt(sessionId)
             return
@@ -459,13 +737,20 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         audioEngine.startCapture()
     }
 
-    override fun onPttBusy(groupId: String, speakerUserId: String) {
+    override fun onPttBusy(groupId: String, speakerUserId: String, queuePosition: Int?) {
         activePttSessionId = null
-        binding.pttStatusText.setText(R.string.ptt_busy)
+        if (queuePosition == null) {
+            pendingPttGroupId = null
+            binding.pttStatusText.setText(R.string.ptt_busy)
+        } else {
+            pendingPttGroupId = groupId
+            binding.pttStatusText.text = getString(R.string.ptt_queued, queuePosition)
+        }
     }
 
     override fun onPttStarted(sessionId: String, groupId: String, speakerUserId: String) {
         if (sessionId != activePttSessionId) {
+            audioEngine.stopPlayback()
             receivedAudioFrames = 0
             binding.pttStatusText.setText(R.string.ptt_receiving)
             AudioRouting.setSpeakerphoneOn(applicationContext, true)
@@ -477,7 +762,8 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             audioEngine.stopCapture()
             activePttSessionId = null
         }
-        binding.pttStatusText.setText(R.string.ptt_ready)
+        audioEngine.stopPlayback()
+        updateReadyStatus()
         AudioRouting.setSpeakerphoneOn(applicationContext, false)
     }
 
@@ -490,7 +776,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                 payload.size,
             )
             AudioRouting.setSpeakerphoneOn(applicationContext, true)
-            audioEngine.play(payload)
+            audioEngine.play(sessionId, sequence, payload)
         }
     }
 
@@ -588,4 +874,10 @@ private class GroupSelectionListener(
     }
 
     override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+}
+
+private enum class SessionTab {
+    HOME,
+    TARGET,
+    PROFILE,
 }

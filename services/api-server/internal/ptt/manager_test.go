@@ -68,3 +68,60 @@ func TestManagerReleasesSessionOnDisconnect(t *testing.T) {
 		t.Fatalf("expected disconnect persistence, got %#v", repository.stopped)
 	}
 }
+
+func TestManagerQueuesAndPromotesRequestsInOrder(t *testing.T) {
+	repository := &fakeRepository{}
+	manager := NewManager(repository)
+	_, _, err := manager.Start(context.Background(), "group-1", "user-1", "connection-1", "")
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	position, err := manager.Enqueue(QueuedRequest{
+		GroupID:           "group-1",
+		SpeakerUserID:     "user-2",
+		OwnerConnectionID: "connection-2",
+		RequestID:         "request-2",
+	})
+	if err != nil || position != 1 {
+		t.Fatalf("enqueue first request: position=%d err=%v", position, err)
+	}
+	position, err = manager.Enqueue(QueuedRequest{
+		GroupID:           "group-1",
+		SpeakerUserID:     "user-3",
+		OwnerConnectionID: "connection-3",
+		RequestID:         "request-3",
+	})
+	if err != nil || position != 2 {
+		t.Fatalf("enqueue second request: position=%d err=%v", position, err)
+	}
+
+	active := manager.byGroup["group-1"]
+	if _, err := manager.Stop(context.Background(), active.ID, "user-1", "connection-1", "user_stop"); err != nil {
+		t.Fatalf("stop active session: %v", err)
+	}
+	session, request, err := manager.StartNext(context.Background(), "group-1")
+	if err != nil || request == nil {
+		t.Fatalf("promote next request: request=%#v err=%v", request, err)
+	}
+	if session.SpeakerUserID != "user-2" || request.RequestID != "request-2" {
+		t.Fatalf("expected user-2 first, got session=%#v request=%#v", session, request)
+	}
+}
+
+func TestManagerCancelsQueuedRequest(t *testing.T) {
+	manager := NewManager(&fakeRepository{})
+	_, _ = manager.Enqueue(QueuedRequest{
+		GroupID:           "group-1",
+		SpeakerUserID:     "user-2",
+		OwnerConnectionID: "connection-2",
+	})
+
+	if !manager.CancelQueued("group-1", "connection-2") {
+		t.Fatal("expected queued request to be cancelled")
+	}
+	session, request, err := manager.StartNext(context.Background(), "group-1")
+	if err != nil || request != nil || session.ID != "" {
+		t.Fatalf("expected empty queue, got session=%#v request=%#v err=%v", session, request, err)
+	}
+}

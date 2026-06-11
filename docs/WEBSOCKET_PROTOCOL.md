@@ -94,6 +94,9 @@ Status:
 - `online`
 - `offline`
 
+Operator menerima perubahan presence seluruh user. Client anggota grup menerima
+perubahan presence user yang sedang join pada grup yang sama.
+
 ## Group Join
 
 Client:
@@ -104,7 +107,8 @@ Client:
   "requestId": "req-1",
   "timestamp": "2026-06-08T12:00:00Z",
   "payload": {
-    "groupId": "uuid"
+    "groupId": "uuid",
+    "queue": true
   }
 }
 ```
@@ -117,13 +121,15 @@ Server:
   "requestId": "req-1",
   "timestamp": "2026-06-08T12:00:00Z",
   "payload": {
-    "groupId": "uuid"
+    "groupId": "uuid",
+    "onlineUserIds": ["user-uuid"]
   }
 }
 ```
 
 Server hanya menerima join jika user terdaftar di `group_members`. Join yang
 tidak diizinkan menghasilkan event `error` dengan code `forbidden`.
+`onlineUserIds` adalah snapshot user yang sedang terhubung dan sudah join grup.
 
 ## Supported Events by Phase
 
@@ -135,6 +141,7 @@ Handler realtime saat ini menerima:
 - `sos.create`
 - `sos.ack` untuk role operator
 - `ptt.start`
+- `ptt.cancel`
 - `ptt.stop`
 
 Audio Opus dikirim sebagai WebSocket binary setelah server mengirim
@@ -275,7 +282,7 @@ Speaker starts talk:
 }
 ```
 
-Dispatcher dapat memilih satu user dalam grup yang sama untuk direct talk:
+Client dapat memilih satu user lain dalam grup yang sama untuk direct talk:
 
 ```json
 {
@@ -284,15 +291,24 @@ Dispatcher dapat memilih satu user dalam grup yang sama untuk direct talk:
   "timestamp": "2026-06-08T12:00:00Z",
   "payload": {
     "groupId": "uuid",
-    "targetUserId": "uuid"
+    "targetUserId": "uuid",
+    "queue": true
   }
 }
 ```
 
 Tanpa `targetUserId`, audio dibroadcast ke semua koneksi yang join grup. Dengan
-`targetUserId`, hanya role operator yang boleh memulai dan target harus online
-serta sudah join grup tersebut. Talk lock tetap berlaku per grup. Event control
-dan audio direct hanya dikirim ke speaker dan target.
+`targetUserId`, target harus merupakan anggota aktif grup dan tidak boleh sama
+dengan speaker. Target tidak wajib sedang online. Jika belum terhubung atau belum
+join grup, server mengirim FCM `ptt_wakeup` hanya ke perangkat target agar service
+Android hidup, WebSocket tersambung, dan target join grup. Frame audio mulai
+diteruskan setelah target berhasil join. Talk lock tetap berlaku per grup dan
+event control serta audio direct hanya dikirim ke speaker dan target.
+
+`queue` bersifat opsional dan default `false` untuk kompatibilitas client lama.
+Jika `true` dan grup sedang dipakai, request masuk antrean FIFO maksimal 20
+request per grup. Satu koneksi hanya dapat memiliki satu posisi dalam antrean
+grup yang sama.
 
 Server grants:
 
@@ -333,7 +349,25 @@ Server rejects busy:
   "timestamp": "2026-06-08T12:00:00Z",
   "payload": {
     "groupId": "uuid",
-    "speakerUserId": "uuid"
+    "speakerUserId": "uuid",
+    "queued": true,
+    "queuePosition": 1,
+    "queueFull": false
+  }
+}
+```
+
+Saat speaker aktif berhenti atau disconnect, request pertama yang masih valid
+otomatis menerima `ptt.granted`. Client harus tetap menunggu grant sebelum
+menyalakan mikrofon. Jika tombol dilepas saat masih antre, client membatalkan:
+
+```json
+{
+  "type": "ptt.cancel",
+  "requestId": "req-ptt-cancel-1",
+  "timestamp": "2026-06-08T12:00:00Z",
+  "payload": {
+    "groupId": "uuid"
   }
 }
 ```

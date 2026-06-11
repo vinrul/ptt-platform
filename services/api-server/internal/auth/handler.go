@@ -138,3 +138,52 @@ func (h *Handler) Me(c *gin.Context) {
 
 	c.JSON(http.StatusOK, user)
 }
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword" binding:"required"`
+	NewPassword     string `json:"newPassword" binding:"required"`
+}
+
+func (h *Handler) ChangePassword(c *gin.Context) {
+	claims, err := ClaimsFromContext(c)
+	if err != nil {
+		apiutil.Error(c, http.StatusUnauthorized, "unauthorized", "Authentication is required", nil)
+		return
+	}
+
+	var request changePasswordRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		apiutil.Error(c, http.StatusBadRequest, "validation_error", "currentPassword and newPassword are required", nil)
+		return
+	}
+	if len(request.NewPassword) < 8 {
+		apiutil.Error(c, http.StatusBadRequest, "validation_error", "New password must be at least 8 characters", nil)
+		return
+	}
+
+	err = h.service.ChangePassword(
+		c.Request.Context(),
+		claims.Subject,
+		request.CurrentPassword,
+		request.NewPassword,
+	)
+	if errors.Is(err, ErrCurrentPassword) {
+		apiutil.Error(c, http.StatusUnauthorized, "invalid_current_password", "Current password is invalid", nil)
+		return
+	}
+	if errors.Is(err, ErrPasswordUnchanged) {
+		apiutil.Error(c, http.StatusConflict, "password_unchanged", "New password must be different", nil)
+		return
+	}
+	if errors.Is(err, ErrUserNotFound) {
+		apiutil.Error(c, http.StatusNotFound, "not_found", "Active user not found", nil)
+		return
+	}
+	if err != nil {
+		log.Printf("auth change password failed: %v", err)
+		apiutil.Error(c, http.StatusInternalServerError, "server_error", "Unable to change password", nil)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}

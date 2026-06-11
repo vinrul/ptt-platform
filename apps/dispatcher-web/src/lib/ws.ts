@@ -3,7 +3,7 @@ import type { ClientRealtimeEvent, ServerRealtimeEvent } from "@ptt-fleet/shared
 export type RealtimeStatus = "idle" | "connecting" | "connected" | "reconnecting";
 
 interface RealtimeClientOptions {
-  accessToken: string;
+  getAccessToken: () => Promise<string>;
   onEvent: (event: ServerRealtimeEvent) => void;
   onBinary?: (data: ArrayBuffer) => void;
   onStatus: (status: RealtimeStatus) => void;
@@ -19,20 +19,40 @@ export class RealtimeClient {
   private reconnectTimer: number | null = null;
   private reconnectAttempt = 0;
   private stopped = false;
+  private connecting = false;
 
   constructor(options: RealtimeClientOptions) {
     this.options = options;
   }
 
   connect(): void {
-    if (this.socket || this.stopped) {
+    if (this.socket || this.connecting || this.stopped) {
       return;
     }
 
+    this.connecting = true;
     this.options.onStatus(this.reconnectAttempt === 0 ? "connecting" : "reconnecting");
-    const socket = new WebSocket(buildWebSocketUrl(this.options.accessToken));
+    void this.openSocket();
+  }
+
+  private async openSocket(): Promise<void> {
+    let accessToken: string;
+    try {
+      accessToken = await this.options.getAccessToken();
+    } catch {
+      this.connecting = false;
+      if (!this.stopped) this.scheduleReconnect();
+      return;
+    }
+    if (this.stopped) {
+      this.connecting = false;
+      return;
+    }
+
+    const socket = new WebSocket(buildWebSocketUrl(accessToken));
     socket.binaryType = "arraybuffer";
     this.socket = socket;
+    this.connecting = false;
 
     socket.addEventListener("open", () => {
       if (this.stopped) {

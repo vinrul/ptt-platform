@@ -99,6 +99,16 @@ func (c *Connection) HasJoinedGroup(groupID string) bool {
 	return exists
 }
 
+func (c *Connection) JoinedGroupIDs() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	groupIDs := make([]string, 0, len(c.JoinedGroups))
+	for groupID := range c.JoinedGroups {
+		groupIDs = append(groupIDs, groupID)
+	}
+	return groupIDs
+}
+
 func (c *Connection) Close(code int, reason string) {
 	c.closeOnce.Do(func() {
 		close(c.done)

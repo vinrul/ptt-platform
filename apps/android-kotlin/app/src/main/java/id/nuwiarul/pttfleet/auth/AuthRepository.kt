@@ -41,6 +41,31 @@ class AuthRepository(
         }
     }
 
+    suspend fun changePassword(
+        session: AuthSession,
+        currentPassword: String,
+        newPassword: String,
+    ) = withContext(Dispatchers.IO) {
+        val requestBody = JSONObject()
+            .put("currentPassword", currentPassword)
+            .put("newPassword", newPassword)
+            .toString()
+            .toRequestBody(JSON_MEDIA_TYPE)
+
+        val request = Request.Builder()
+            .url("${session.serverUrl}/api/auth/change-password")
+            .header("Authorization", "Bearer ${session.accessToken}")
+            .post(requestBody)
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw AuthException(errorMessage(body, response.code))
+            }
+        }
+    }
+
     private fun parseSession(serverUrl: String, body: String): AuthSession {
         val root = JSONObject(body)
         val user = root.getJSONObject("user")

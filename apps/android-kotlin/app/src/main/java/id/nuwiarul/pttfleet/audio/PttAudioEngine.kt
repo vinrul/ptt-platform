@@ -9,7 +9,9 @@ import android.media.MediaRecorder
 import io.github.jaredmdobson.concentus.OpusApplication
 import io.github.jaredmdobson.concentus.OpusDecoder
 import io.github.jaredmdobson.concentus.OpusEncoder
-import java.util.concurrent.Executors
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class PttAudioEngine(
@@ -18,7 +20,15 @@ class PttAudioEngine(
     private val onError: (String) -> Unit,
 ) {
     private val capturing = AtomicBoolean(false)
-    private val playbackExecutor = Executors.newSingleThreadExecutor()
+    private val jitterBuffer = AudioJitterBuffer()
+    private val playbackExecutor = ThreadPoolExecutor(
+        1,
+        1,
+        0L,
+        TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue(MAX_QUEUED_PLAYBACK_FRAMES),
+        ThreadPoolExecutor.DiscardOldestPolicy(),
+    )
     private var captureThread: Thread? = null
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
@@ -86,36 +96,57 @@ class PttAudioEngine(
         audioRecord = null
     }
 
-    fun play(opusPayload: ByteArray) {
+    fun play(sessionId: String, sequence: Long, opusPayload: ByteArray) {
+        val readyFrames = jitterBuffer.add(
+            BufferedAudioFrame(sessionId, sequence, opusPayload),
+        )
+        readyFrames.forEach { frame ->
+            playbackExecutor.execute { playFrame(frame.payload) }
+        }
+    }
+
+    private fun playFrame(opusPayload: ByteArray) {
+        runCatching {
+            val pcm = ShortArray(MAX_DECODE_SAMPLES)
+            val samples = decoder.decode(
+                opusPayload,
+                0,
+                opusPayload.size,
+                pcm,
+                0,
+                MAX_DECODE_SAMPLES,
+                false,
+            )
+            PcmGain.apply(pcm, samples, PLAYBACK_GAIN)
+            val track = audioTrack ?: createAudioTrack().also {
+                audioTrack = it
+                it.setVolume(1f)
+                it.play()
+            }
+            val written = track.write(pcm, 0, samples, AudioTrack.WRITE_BLOCKING)
+            check(written >= 0) { "AudioTrack write failed with code $written" }
+            onPlayedFrame(written)
+        }.onFailure {
+            onError("Opus playback failed (${opusPayload.size} bytes): ${it.message ?: "decode error"}")
+        }
+    }
+
+    fun stopPlayback() {
+        jitterBuffer.clear()
+        playbackExecutor.queue.clear()
         playbackExecutor.execute {
             runCatching {
-                val pcm = ShortArray(MAX_DECODE_SAMPLES)
-                val samples = decoder.decode(
-                    opusPayload,
-                    0,
-                    opusPayload.size,
-                    pcm,
-                    0,
-                    MAX_DECODE_SAMPLES,
-                    false,
-                )
-                PcmGain.apply(pcm, samples, PLAYBACK_GAIN)
-                val track = audioTrack ?: createAudioTrack().also {
-                    audioTrack = it
-                    it.setVolume(1f)
-                    it.play()
-                }
-                val written = track.write(pcm, 0, samples, AudioTrack.WRITE_BLOCKING)
-                check(written >= 0) { "AudioTrack write failed with code $written" }
-                onPlayedFrame(written)
-            }.onFailure {
-                onError("Opus playback failed (${opusPayload.size} bytes): ${it.message ?: "decode error"}")
+                audioTrack?.stop()
+                audioTrack?.flush()
+                audioTrack?.release()
             }
+            audioTrack = null
         }
     }
 
     fun release() {
         stopCapture()
+        jitterBuffer.clear()
         playbackExecutor.shutdownNow()
         audioTrack?.stop()
         audioTrack?.release()
@@ -156,5 +187,6 @@ class PttAudioEngine(
         const val BITRATE = 24_000
         const val MAX_OPUS_PACKET = 1_276
         const val PLAYBACK_GAIN = 1.8f
+        const val MAX_QUEUED_PLAYBACK_FRAMES = 8
     }
 }

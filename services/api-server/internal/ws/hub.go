@@ -43,6 +43,7 @@ func (h *Hub) Register(connection *Connection) {
 }
 
 func (h *Hub) Unregister(connection *Connection) {
+	joinedGroupIDs := connection.JoinedGroupIDs()
 	h.mu.Lock()
 	if _, exists := h.connections[connection.ID]; !exists {
 		h.mu.Unlock()
@@ -60,6 +61,11 @@ func (h *Hub) Unregister(connection *Connection) {
 	connection.Close(websocket.CloseNormalClosure, "connection closed")
 	if lastConnection {
 		h.broadcastPresence(connection.UserID, "offline")
+	}
+	for _, groupID := range joinedGroupIDs {
+		if !h.UserHasJoinedGroup(connection.UserID, groupID) {
+			h.BroadcastPresenceToGroup(groupID, connection.UserID, "offline")
+		}
 	}
 }
 
@@ -86,6 +92,12 @@ func (h *Hub) UserConnectionCount(userID string) int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.userCounts[userID]
+}
+
+func (h *Hub) ConnectionByID(connectionID string) *Connection {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.connections[connectionID]
 }
 
 func (h *Hub) BroadcastToOperators(event OutboundEvent) {
@@ -164,6 +176,32 @@ func (h *Hub) UserHasJoinedGroup(userID string, groupID string) bool {
 		}
 	}
 	return false
+}
+
+func (h *Hub) OnlineUserIDsInGroup(groupID string) []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	seen := make(map[string]struct{})
+	userIDs := make([]string, 0)
+	for _, connection := range h.connections {
+		if !connection.HasJoinedGroup(groupID) {
+			continue
+		}
+		if _, exists := seen[connection.UserID]; exists {
+			continue
+		}
+		seen[connection.UserID] = struct{}{}
+		userIDs = append(userIDs, connection.UserID)
+	}
+	return userIDs
+}
+
+func (h *Hub) BroadcastPresenceToGroup(groupID string, userID string, status string) {
+	h.BroadcastToGroup(groupID, NewEvent("presence.updated", "", map[string]any{
+		"userId":     userID,
+		"status":     status,
+		"lastSeenAt": time.Now().UTC().Format(time.RFC3339),
+	}))
 }
 
 func (h *Hub) BroadcastDirectPTT(

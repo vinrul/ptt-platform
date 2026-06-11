@@ -9,8 +9,10 @@ Fitur sampai Phase 9:
 - Access/refresh token dienkripsi memakai AES-GCM dengan key di Android Keystore.
 - WebSocket OkHttp dengan JWT query token.
 - `connection.ready`, heartbeat 25 detik, dan reconnect exponential backoff.
+- Timeout handshake WebSocket 15 detik; socket yang belum ready akan dicoba ulang.
+- Playback memakai jitter buffer 3 frame (sekitar 60 ms) dan queue terbatas.
 - Status koneksi dan logout.
-- GPS realtime melalui Fused Location Provider dengan interval target 15 detik.
+- GPS realtime melalui Fused Location Provider dengan interval adaptif.
 - Permission lokasi baru diminta ketika user menekan `Start GPS tracking`.
 - Update lokasi dikirim sebagai event `gps.update` selama WebSocket terhubung.
 - Tombol SOS dengan dialog konfirmasi mengirim `sos.create`.
@@ -36,6 +38,35 @@ Service ini mempertahankan WebSocket, join channel terakhir, dan playback suara
 ketika layar mati, aplikasi diminimalkan, atau Activity ditutup. Gunakan aksi
 `Stop` pada notifikasi atau tombol logout untuk menghentikannya.
 
+Pilihan switch GPS disimpan lokal dengan `SharedPreferences`. Restart aplikasi
+atau FCM wakeup tidak mengaktifkan tracking periodik jika sebelumnya dimatikan.
+FCM wakeup tetap dapat meminta satu lokasi terbaru tanpa mengubah pilihan switch.
+
+Tracking periodik dimulai dalam mode bergerak dengan high accuracy dan interval
+target 10 detik. Setelah enam sampel berturut-turut berada di bawah 0,5 m/s,
+tracking berpindah ke balanced power dengan interval target 60 detik. Kecepatan
+minimal 1 m/s mengembalikan mode bergerak pada sampel berikutnya. Hysteresis ini
+mencegah noise GPS membuat mode sering berpindah saat perangkat diam.
+
+Untuk jaringan seluler buruk, WebSocket melakukan reconnect exponential mulai
+2 detik hingga maksimum 30 detik. Status baru dianggap connected setelah server
+mengirim `connection.ready`. REST memakai connect timeout 10 detik, write timeout
+15 detik, read timeout 20 detik, dan call timeout total 30 detik. OkHttp hanya
+melakukan retry koneksi transparan; operasi perubahan data seperti ganti password
+tidak diulang manual agar tidak terkirim dua kali.
+
+Talk lock berlaku per grup. Jika Android meminta PTT ketika grup sedang dipakai,
+request masuk antrean FIFO dan aplikasi menampilkan nomor antrean. Mikrofon baru
+aktif setelah `ptt.granted`. Melepas tombol sebelum mendapat grant mengirim
+`ptt.cancel`, sehingga user tidak tiba-tiba mulai bicara setelah niat bicara
+sudah dibatalkan.
+
+Setelah login, navigasi utama dibagi menjadi tiga tab:
+
+- `Home`: pilihan grup, GPS, PTT broadcast ke seluruh grup, dan SOS.
+- `Talk Target`: daftar anggota grup beserta status online/offline dan PTT privat.
+- `Profile`: identitas user, ganti password, dan logout.
+
 Pada beberapa perangkat, nonaktifkan battery optimization untuk PTT Fleet agar
 vendor Android tidak membunuh foreground service ketika layar mati. Menekan
 `Force stop` dari Settings tetap menghentikan seluruh service sampai aplikasi
@@ -45,6 +76,10 @@ FCM `ptt_wakeup` akan menghidupkan service, menyambungkan ulang WebSocket,
 bergabung ke `groupId` dari payload, meminta satu lokasi terbaru, lalu mengirim
 `gps.update`. Layar dibangunkan sekitar 8 detik. Android dapat menolak membuka
 Activity otomatis dari background, tetapi wake lock dan notifikasi tetap aktif.
+
+Untuk direct PTT, target tidak harus sedang online. Server mengirim
+`ptt_wakeup` hanya ke perangkat user yang dipilih; audio mulai diterima setelah
+service tersambung dan berhasil join grup.
 ```
 
 Perangkat fisik harus memakai IP LAN komputer development, misalnya:

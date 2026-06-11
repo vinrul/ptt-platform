@@ -21,6 +21,7 @@ import id.nuwiarul.pttfleet.audio.AudioRouting
 import id.nuwiarul.pttfleet.auth.SecureTokenStore
 import id.nuwiarul.pttfleet.location.GpsSample
 import id.nuwiarul.pttfleet.location.LocationTracker
+import id.nuwiarul.pttfleet.location.TrackingPreferenceStore
 import android.net.wifi.WifiManager
 import id.nuwiarul.pttfleet.websocket.ConnectionStatus
 import id.nuwiarul.pttfleet.websocket.RealtimeClient
@@ -40,6 +41,7 @@ class PatrolService : Service(), RealtimeListener {
 
     override fun onCreate() {
         super.onCreate()
+        isTrackingActive = TrackingPreferenceStore(applicationContext).isEnabled()
         createNotificationChannel()
         audioEngine = PttAudioEngine(
             onEncodedFrame = {},
@@ -79,9 +81,11 @@ class PatrolService : Service(), RealtimeListener {
         }
         if (intent?.action == ACTION_START_TRACKING) {
             isTrackingActive = true
+            TrackingPreferenceStore(applicationContext).setEnabled(true)
             checkAndStartLocationTracking()
         } else if (intent?.action == ACTION_STOP_TRACKING) {
             isTrackingActive = false
+            TrackingPreferenceStore(applicationContext).setEnabled(false)
             locationTracker?.stop()
         }
         if (intent?.action == ACTION_WAKEUP) {
@@ -224,25 +228,29 @@ class PatrolService : Service(), RealtimeListener {
 
     override fun onError(message: String) = updateNotification(message)
 
-    override fun onGroupJoined(groupId: String) {
+    override fun onGroupJoined(groupId: String, onlineUserIds: Set<String>) {
         updateNotification(getString(R.string.background_channel_ready))
     }
 
+    override fun onPresenceUpdated(userId: String, status: String) = Unit
+
     override fun onPttGranted(sessionId: String, groupId: String) = Unit
 
-    override fun onPttBusy(groupId: String, speakerUserId: String) = Unit
+    override fun onPttBusy(groupId: String, speakerUserId: String, queuePosition: Int?) = Unit
 
     override fun onPttStarted(sessionId: String, groupId: String, speakerUserId: String) {
         if (speakerUserId == ownUserId) {
             localSpeakerSessions += sessionId
             return
         }
+        audioEngine.stopPlayback()
         updateNotification(getString(R.string.background_receiving))
         AudioRouting.setSpeakerphoneOn(applicationContext, true)
     }
 
     override fun onPttStopped(sessionId: String, groupId: String, reason: String) {
         localSpeakerSessions -= sessionId
+        audioEngine.stopPlayback()
         updateNotification(getString(R.string.background_channel_ready))
         AudioRouting.setSpeakerphoneOn(applicationContext, false)
     }
@@ -251,7 +259,7 @@ class PatrolService : Service(), RealtimeListener {
         if (sessionId in localSpeakerSessions) return
         if (MainActivity.isVisible) return
         AudioRouting.setSpeakerphoneOn(applicationContext, true)
-        audioEngine.play(payload)
+        audioEngine.play(sessionId, sequence, payload)
     }
 
     private fun ensureConnected(force: Boolean = false) {
@@ -396,16 +404,23 @@ class PatrolService : Service(), RealtimeListener {
         }
 
         fun startTracking(context: Context) {
+            TrackingPreferenceStore(context.applicationContext).setEnabled(true)
+            isTrackingActive = true
             context.startForegroundService(
                 Intent(context, PatrolService::class.java).setAction(ACTION_START_TRACKING)
             )
         }
 
         fun stopTracking(context: Context) {
+            TrackingPreferenceStore(context.applicationContext).setEnabled(false)
+            isTrackingActive = false
             context.startForegroundService(
                 Intent(context, PatrolService::class.java).setAction(ACTION_STOP_TRACKING)
             )
         }
+
+        fun isTrackingEnabled(context: Context): Boolean =
+            TrackingPreferenceStore(context.applicationContext).isEnabled()
 
         fun stop(context: Context) {
             context.startForegroundService(

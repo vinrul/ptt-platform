@@ -31,6 +31,7 @@ type Member struct {
 	UserID      string    `json:"userId"`
 	Username    string    `json:"username"`
 	FullName    string    `json:"fullName"`
+	Role        string    `json:"role"`
 	RoleInGroup string    `json:"roleInGroup"`
 	JoinedAt    time.Time `json:"joinedAt"`
 }
@@ -100,6 +101,21 @@ func (s *Service) ListForUser(ctx context.Context, userID string) ([]Group, erro
 	return items, rows.Err()
 }
 
+func (s *Service) IsMember(ctx context.Context, groupID string, userID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var allowed bool
+	err := s.store.Postgres.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM group_members
+			WHERE group_id = $1 AND user_id = $2
+		)
+	`, groupID, userID).Scan(&allowed)
+	return allowed, err
+}
+
 func (s *Service) Create(ctx context.Context, actorID string, name string, description string) (Group, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -149,7 +165,7 @@ func (s *Service) Get(ctx context.Context, groupID string) (Detail, error) {
 	}
 
 	rows, err := s.store.Postgres.Query(ctx, `
-		SELECT u.id, u.username, u.full_name, gm.role_in_group, gm.joined_at
+		SELECT u.id, u.username, u.full_name, u.role, gm.role_in_group, gm.joined_at
 		FROM group_members gm
 		JOIN users u ON u.id = gm.user_id
 		WHERE gm.group_id = $1
@@ -163,7 +179,14 @@ func (s *Service) Get(ctx context.Context, groupID string) (Detail, error) {
 	detail.Members = make([]Member, 0)
 	for rows.Next() {
 		var member Member
-		if err := rows.Scan(&member.UserID, &member.Username, &member.FullName, &member.RoleInGroup, &member.JoinedAt); err != nil {
+		if err := rows.Scan(
+			&member.UserID,
+			&member.Username,
+			&member.FullName,
+			&member.Role,
+			&member.RoleInGroup,
+			&member.JoinedAt,
+		); err != nil {
 			return Detail{}, err
 		}
 		detail.Members = append(detail.Members, member)
@@ -272,10 +295,10 @@ func (s *Service) AddMember(ctx context.Context, actorID string, groupID string,
 		return Member{}, err
 	}
 	if err := tx.QueryRow(ctx, `
-		SELECT username, full_name
+		SELECT username, full_name, role
 		FROM users
 		WHERE id = $1
-	`, userID).Scan(&member.Username, &member.FullName); err != nil {
+	`, userID).Scan(&member.Username, &member.FullName, &member.Role); err != nil {
 		return Member{}, err
 	}
 	if err := writeAudit(ctx, tx, actorID, "group.member_added", groupID); err != nil {

@@ -74,8 +74,25 @@ func (h *Handler) Create(c *gin.Context) {
 }
 
 func (h *Handler) Get(c *gin.Context) {
-	if _, ok := requireReadRole(c); !ok {
+	claims, err := auth.ClaimsFromContext(c)
+	if err != nil {
+		apiutil.Error(c, http.StatusUnauthorized, "unauthorized", "Authentication is required", nil)
 		return
+	}
+	if claims.Role == "field_user" {
+		allowed, membershipErr := h.service.IsMember(
+			c.Request.Context(),
+			c.Param("id"),
+			claims.Subject,
+		)
+		if membershipErr != nil {
+			apiutil.Error(c, http.StatusInternalServerError, "server_error", "Unable to validate group membership", nil)
+			return
+		}
+		if !allowed {
+			apiutil.Error(c, http.StatusForbidden, "forbidden", "User is not a member of this group", nil)
+			return
+		}
 	}
 
 	group, err := h.service.Get(c.Request.Context(), c.Param("id"))
@@ -210,19 +227,6 @@ func (h *Handler) RemoveMember(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
-}
-
-func requireReadRole(c *gin.Context) (auth.Claims, bool) {
-	claims, err := auth.ClaimsFromContext(c)
-	if err != nil {
-		apiutil.Error(c, http.StatusUnauthorized, "unauthorized", "Authentication is required", nil)
-		return auth.Claims{}, false
-	}
-	if claims.Role == "field_user" {
-		apiutil.Error(c, http.StatusForbidden, "forbidden", "This endpoint requires an operator role", nil)
-		return auth.Claims{}, false
-	}
-	return claims, true
 }
 
 func requireSuperAdmin(c *gin.Context) (auth.Claims, bool) {

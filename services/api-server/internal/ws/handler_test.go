@@ -23,6 +23,7 @@ type fakeAccessRepository struct {
 	identity   Identity
 	identities map[string]Identity
 	joinErr    error
+	joinErrors map[string]error
 }
 
 type fakeGPSRecorder struct {
@@ -116,18 +117,9 @@ func TestHandlerRelaysPTTAudioWithinJoinedGroup(t *testing.T) {
 	if err := speaker.WriteJSON(NewEvent("ptt.start", "req-start", map[string]any{"groupId": "group-1"})); err != nil {
 		t.Fatalf("write ptt.start: %v", err)
 	}
-	granted := readEvent(t, speaker)
-	if granted.Type != "ptt.granted" {
-		t.Fatalf("expected ptt.granted, got %s", granted.Type)
-	}
-	startedSpeaker := readEvent(t, speaker)
-	if startedSpeaker.Type != "ptt.started" {
-		t.Fatalf("expected ptt.started for speaker, got %s", startedSpeaker.Type)
-	}
-	startedListener := readEvent(t, listener)
-	if startedListener.Type != "ptt.started" {
-		t.Fatalf("expected ptt.started for listener, got %s", startedListener.Type)
-	}
+	readEventType(t, speaker, "ptt.granted")
+	readEventType(t, speaker, "ptt.started")
+	readEventType(t, listener, "ptt.started")
 
 	frame := make([]byte, 28)
 	frame[0] = 0x01
@@ -159,10 +151,79 @@ func TestHandlerRelaysPTTAudioWithinJoinedGroup(t *testing.T) {
 	}
 }
 
+func TestHandlerQueuesBusySpeakerAndPromotesAfterStop(t *testing.T) {
+	server, manager, hub := newWebSocketTestServer(t, fakeAccessRepository{
+		identities: map[string]Identity{
+			"user-1": {UserID: "user-1", Username: "field1", Role: "field_user"},
+			"user-2": {UserID: "user-2", Username: "field2", Role: "field_user"},
+		},
+	})
+	defer server.Close()
+	defer hub.CloseAll()
+
+	first := dialTestConnection(t, server.URL, manager, "user-1", "field1", "field_user")
+	defer first.Close()
+	second := dialTestConnection(t, server.URL, manager, "user-2", "field2", "field_user")
+	defer second.Close()
+	_ = readEvent(t, first)
+	_ = readEvent(t, second)
+
+	for _, connection := range []*websocket.Conn{first, second} {
+		if err := connection.WriteJSON(NewEvent("group.join", "", map[string]any{"groupId": "group-1"})); err != nil {
+			t.Fatalf("write group.join: %v", err)
+		}
+		readEventType(t, connection, "group.joined")
+	}
+
+	if err := first.WriteJSON(NewEvent("ptt.start", "req-first", map[string]any{
+		"groupId": "group-1",
+		"queue":   true,
+	})); err != nil {
+		t.Fatalf("write first ptt.start: %v", err)
+	}
+	granted := readEventType(t, first, "ptt.granted")
+	var grantedPayload struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(granted.Payload, &grantedPayload); err != nil {
+		t.Fatalf("decode granted payload: %v", err)
+	}
+	readEventType(t, first, "ptt.started")
+	readEventType(t, second, "ptt.started")
+
+	if err := second.WriteJSON(NewEvent("ptt.start", "req-second", map[string]any{
+		"groupId": "group-1",
+		"queue":   true,
+	})); err != nil {
+		t.Fatalf("write queued ptt.start: %v", err)
+	}
+	busy := readEventType(t, second, "ptt.busy")
+	var busyPayload struct {
+		Queued        bool `json:"queued"`
+		QueuePosition int  `json:"queuePosition"`
+	}
+	if err := json.Unmarshal(busy.Payload, &busyPayload); err != nil {
+		t.Fatalf("decode busy payload: %v", err)
+	}
+	if !busyPayload.Queued || busyPayload.QueuePosition != 1 {
+		t.Fatalf("expected queue position 1, got %#v", busyPayload)
+	}
+
+	if err := first.WriteJSON(NewEvent("ptt.stop", "req-stop", map[string]any{
+		"sessionId": grantedPayload.SessionID,
+	})); err != nil {
+		t.Fatalf("write ptt.stop: %v", err)
+	}
+	promoted := readEventType(t, second, "ptt.granted")
+	if promoted.RequestID != "req-second" {
+		t.Fatalf("expected original queued request id, got %q", promoted.RequestID)
+	}
+}
+
 func TestHandlerRelaysDirectPTTOnlyToTargetUser(t *testing.T) {
 	server, manager, hub := newWebSocketTestServer(t, fakeAccessRepository{
 		identities: map[string]Identity{
-			"dispatcher-1": {UserID: "dispatcher-1", Username: "dispatcher", Role: "dispatcher"},
+			"dispatcher-1": {UserID: "dispatcher-1", Username: "field3", Role: "field_user"},
 			"user-1":       {UserID: "user-1", Username: "field1", Role: "field_user"},
 			"user-2":       {UserID: "user-2", Username: "field2", Role: "field_user"},
 		},
@@ -174,12 +235,11 @@ func TestHandlerRelaysDirectPTTOnlyToTargetUser(t *testing.T) {
 	defer target.Close()
 	bystander := dialTestConnection(t, server.URL, manager, "user-2", "field2", "field_user")
 	defer bystander.Close()
-	dispatcher := dialTestConnection(t, server.URL, manager, "dispatcher-1", "dispatcher", "dispatcher")
+	dispatcher := dialTestConnection(t, server.URL, manager, "dispatcher-1", "field3", "field_user")
 	defer dispatcher.Close()
 
 	_ = readEvent(t, target)
 	_ = readEvent(t, bystander)
-	_ = readEvent(t, dispatcher)
 	_ = readEvent(t, dispatcher)
 
 	for _, connection := range []*websocket.Conn{dispatcher, target, bystander} {
@@ -190,6 +250,7 @@ func TestHandlerRelaysDirectPTTOnlyToTargetUser(t *testing.T) {
 			t.Fatalf("expected group.joined, got %s", event.Type)
 		}
 	}
+	readEventType(t, bystander, "presence.updated")
 
 	if err := dispatcher.WriteJSON(NewEvent("ptt.start", "req-direct", map[string]any{
 		"groupId":      "group-1",
@@ -197,15 +258,9 @@ func TestHandlerRelaysDirectPTTOnlyToTargetUser(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("write direct ptt.start: %v", err)
 	}
-	if event := readEvent(t, dispatcher); event.Type != "ptt.granted" {
-		t.Fatalf("expected ptt.granted, got %s", event.Type)
-	}
-	if event := readEvent(t, dispatcher); event.Type != "ptt.started" {
-		t.Fatalf("expected dispatcher ptt.started, got %s", event.Type)
-	}
-	if event := readEvent(t, target); event.Type != "ptt.started" {
-		t.Fatalf("expected target ptt.started, got %s", event.Type)
-	}
+	readEventType(t, dispatcher, "ptt.granted")
+	readEventType(t, dispatcher, "ptt.started")
+	readEventType(t, target, "ptt.started")
 
 	frame := make([]byte, 28)
 	frame[0] = 0x01
@@ -238,7 +293,70 @@ func TestHandlerRelaysDirectPTTOnlyToTargetUser(t *testing.T) {
 	}
 }
 
-func (r fakeAccessRepository) CanJoinGroup(_ context.Context, _ string, _ string) error {
+func TestHandlerAllowsDirectPTTToOfflineGroupMember(t *testing.T) {
+	server, manager, hub := newWebSocketTestServer(t, fakeAccessRepository{
+		identities: map[string]Identity{
+			"user-1": {UserID: "user-1", Username: "field1", Role: "field_user"},
+		},
+	})
+	defer server.Close()
+	defer hub.CloseAll()
+
+	speaker := dialTestConnection(t, server.URL, manager, "user-1", "field1", "field_user")
+	defer speaker.Close()
+	_ = readEvent(t, speaker)
+
+	if err := speaker.WriteJSON(NewEvent("group.join", "", map[string]any{"groupId": "group-1"})); err != nil {
+		t.Fatalf("write group.join: %v", err)
+	}
+	if event := readEvent(t, speaker); event.Type != "group.joined" {
+		t.Fatalf("expected group.joined, got %s", event.Type)
+	}
+
+	if err := speaker.WriteJSON(NewEvent("ptt.start", "req-direct-offline", map[string]any{
+		"groupId":      "group-1",
+		"targetUserId": "user-2",
+	})); err != nil {
+		t.Fatalf("write direct ptt.start: %v", err)
+	}
+	readEventType(t, speaker, "ptt.granted")
+	readEventType(t, speaker, "ptt.started")
+}
+
+func TestHandlerRejectsDirectPTTToNonMember(t *testing.T) {
+	server, manager, hub := newWebSocketTestServer(t, fakeAccessRepository{
+		identities: map[string]Identity{
+			"user-1": {UserID: "user-1", Username: "field1", Role: "field_user"},
+		},
+		joinErrors: map[string]error{
+			"user-2": ErrGroupNotAllowed,
+		},
+	})
+	defer server.Close()
+	defer hub.CloseAll()
+
+	speaker := dialTestConnection(t, server.URL, manager, "user-1", "field1", "field_user")
+	defer speaker.Close()
+	_ = readEvent(t, speaker)
+
+	if err := speaker.WriteJSON(NewEvent("group.join", "", map[string]any{"groupId": "group-1"})); err != nil {
+		t.Fatalf("write group.join: %v", err)
+	}
+	_ = readEvent(t, speaker)
+
+	if err := speaker.WriteJSON(NewEvent("ptt.start", "req-direct-non-member", map[string]any{
+		"groupId":      "group-1",
+		"targetUserId": "user-2",
+	})); err != nil {
+		t.Fatalf("write direct ptt.start: %v", err)
+	}
+	readEventType(t, speaker, "error")
+}
+
+func (r fakeAccessRepository) CanJoinGroup(_ context.Context, userID string, _ string) error {
+	if err, exists := r.joinErrors[userID]; exists {
+		return err
+	}
 	return r.joinErr
 }
 
@@ -469,6 +587,16 @@ func readEvent(t *testing.T, connection *websocket.Conn) Event {
 		t.Fatalf("unmarshal event: %v", err)
 	}
 	return event
+}
+
+func readEventType(t *testing.T, connection *websocket.Conn, eventType string) Event {
+	t.Helper()
+	for {
+		event := readEvent(t, connection)
+		if event.Type == eventType {
+			return event
+		}
+	}
 }
 
 func websocketURL(serverURL string) string {

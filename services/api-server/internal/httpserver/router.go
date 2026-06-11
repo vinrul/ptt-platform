@@ -104,6 +104,7 @@ func NewRouter(cfg config.Config, store *db.Store, hub *realtime.Hub) *gin.Engin
 	protected.Use(auth.Middleware(tokenManager))
 	protected.POST("/auth/logout", authHandler.Logout)
 	protected.GET("/auth/me", authHandler.Me)
+	protected.POST("/auth/change-password", authHandler.ChangePassword)
 
 	protected.GET("/users", userHandler.List)
 	protected.POST("/users", userHandler.Create)

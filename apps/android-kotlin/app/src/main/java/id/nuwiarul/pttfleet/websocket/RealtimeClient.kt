@@ -31,9 +31,10 @@ interface RealtimeListener {
     fun onStatusChanged(status: ConnectionStatus)
     fun onReady(connectionId: String)
     fun onError(message: String)
-    fun onGroupJoined(groupId: String)
+    fun onGroupJoined(groupId: String, onlineUserIds: Set<String>)
+    fun onPresenceUpdated(userId: String, status: String)
     fun onPttGranted(sessionId: String, groupId: String)
-    fun onPttBusy(groupId: String, speakerUserId: String)
+    fun onPttBusy(groupId: String, speakerUserId: String, queuePosition: Int?)
     fun onPttStarted(sessionId: String, groupId: String, speakerUserId: String)
     fun onPttStopped(sessionId: String, groupId: String, reason: String)
     fun onAudioFrame(sessionId: String, sequence: Long, payload: ByteArray)
@@ -51,6 +52,7 @@ class RealtimeClient private constructor() {
     private var socket: WebSocket? = null
     private var reconnectFuture: ScheduledFuture<*>? = null
     private var heartbeatFuture: ScheduledFuture<*>? = null
+    private var readyTimeoutFuture: ScheduledFuture<*>? = null
     private var session: AuthSession? = null
     private var reconnectAttempt = 0
     private var stopped = true
@@ -61,6 +63,8 @@ class RealtimeClient private constructor() {
         private set
 
     companion object {
+        private const val READY_TIMEOUT_SECONDS = 15L
+
         @Volatile
         private var instance: RealtimeClient? = null
 
@@ -109,8 +113,10 @@ class RealtimeClient private constructor() {
         stopped = true
         reconnectFuture?.cancel(true)
         heartbeatFuture?.cancel(true)
+        readyTimeoutFuture?.cancel(true)
         reconnectFuture = null
         heartbeatFuture = null
+        readyTimeoutFuture = null
         socket?.close(1000, "android logout")
         socket = null
         session = null
@@ -157,8 +163,17 @@ class RealtimeClient private constructor() {
     )
 
     @Synchronized
-    fun startPtt(groupId: String): Boolean = sendJson(
-        "ptt.start",
+    fun startPtt(groupId: String, targetUserId: String? = null): Boolean {
+        val payload = JSONObject()
+            .put("groupId", groupId)
+            .put("queue", true)
+        targetUserId?.let { payload.put("targetUserId", it) }
+        return sendJson("ptt.start", payload)
+    }
+
+    @Synchronized
+    fun cancelPtt(groupId: String): Boolean = sendJson(
+        "ptt.cancel",
         JSONObject().put("groupId", groupId),
     )
 
@@ -224,20 +239,41 @@ class RealtimeClient private constructor() {
         )
     }
 
-    private fun handleMessage(text: String) {
+    private fun handleMessage(webSocket: WebSocket, text: String) {
         runCatching {
             val event = JSONObject(text)
             when (event.getString("type")) {
                 "connection.ready" -> {
+                    if (!markReady(webSocket)) return
                     val connectionId = event.getJSONObject("payload").getString("connectionId")
                     mainHandler.post {
                         listeners.forEach { it.onReady(connectionId) }
                     }
                 }
                 "group.joined" -> {
-                    val groupId = event.getJSONObject("payload").getString("groupId")
+                    val payload = event.getJSONObject("payload")
+                    val groupId = payload.getString("groupId")
+                    val onlineItems = payload.optJSONArray("onlineUserIds")
+                    val onlineUserIds = buildSet {
+                        if (onlineItems != null) {
+                            for (index in 0 until onlineItems.length()) {
+                                add(onlineItems.getString(index))
+                            }
+                        }
+                    }
                     mainHandler.post {
-                        listeners.forEach { it.onGroupJoined(groupId) }
+                        listeners.forEach { it.onGroupJoined(groupId, onlineUserIds) }
+                    }
+                }
+                "presence.updated" -> {
+                    val payload = event.getJSONObject("payload")
+                    mainHandler.post {
+                        listeners.forEach {
+                            it.onPresenceUpdated(
+                                payload.getString("userId"),
+                                payload.getString("status"),
+                            )
+                        }
                     }
                 }
                 "ptt.granted" -> {
@@ -252,7 +288,11 @@ class RealtimeClient private constructor() {
                     val payload = event.getJSONObject("payload")
                     mainHandler.post {
                         listeners.forEach {
-                            it.onPttBusy(payload.getString("groupId"), payload.getString("speakerUserId"))
+                            it.onPttBusy(
+                                payload.getString("groupId"),
+                                payload.getString("speakerUserId"),
+                                payload.optInt("queuePosition").takeIf { payload.has("queuePosition") && !payload.isNull("queuePosition") },
+                            )
                         }
                     }
                 }
@@ -301,18 +341,57 @@ class RealtimeClient private constructor() {
         }
     }
 
+    @Synchronized
+    private fun markReady(webSocket: WebSocket): Boolean {
+        if (socket !== webSocket || stopped) return false
+        readyTimeoutFuture?.cancel(false)
+        readyTimeoutFuture = null
+        reconnectAttempt = 0
+        startHeartbeat()
+        postStatus(ConnectionStatus.CONNECTED)
+        return true
+    }
+
+    @Synchronized
+    private fun scheduleReadyTimeout(webSocket: WebSocket) {
+        readyTimeoutFuture?.cancel(false)
+        readyTimeoutFuture = scheduler.schedule(
+            {
+                var timedOut = false
+                synchronized(this@RealtimeClient) {
+                    if (socket === webSocket && status != ConnectionStatus.CONNECTED) {
+                        socket = null
+                        timedOut = true
+                        webSocket.cancel()
+                        scheduleReconnect()
+                    }
+                }
+                if (timedOut) {
+                    mainHandler.post {
+                        listeners.forEach {
+                            it.onError("Realtime handshake timed out; retrying")
+                        }
+                    }
+                }
+            },
+            READY_TIMEOUT_SECONDS,
+            TimeUnit.SECONDS,
+        )
+    }
+
     private inner class SocketListener : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             synchronized(this@RealtimeClient) {
-                socket = webSocket
-                reconnectAttempt = 0
-                startHeartbeat()
+                if (socket !== webSocket || stopped) {
+                    webSocket.cancel()
+                    return
+                }
+                scheduleReadyTimeout(webSocket)
             }
-            postStatus(ConnectionStatus.CONNECTED)
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            handleMessage(text)
+            handleMessage(webSocket, text)
         }
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
@@ -330,18 +409,24 @@ class RealtimeClient private constructor() {
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             synchronized(this@RealtimeClient) {
-                if (socket === webSocket) socket = null
+                if (socket !== webSocket) return
+                socket = null
                 heartbeatFuture?.cancel(false)
                 heartbeatFuture = null
+                readyTimeoutFuture?.cancel(false)
+                readyTimeoutFuture = null
                 scheduleReconnect()
             }
         }
 
         override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
             synchronized(this@RealtimeClient) {
-                if (socket === webSocket) socket = null
+                if (socket !== webSocket) return
+                socket = null
                 heartbeatFuture?.cancel(false)
                 heartbeatFuture = null
+                readyTimeoutFuture?.cancel(false)
+                readyTimeoutFuture = null
                 scheduleReconnect()
             }
             mainHandler.post {

@@ -27,7 +27,10 @@ export type PresenceUpdatedEvent = RealtimeEvent<
 
 export type GroupJoinEvent = RealtimeEvent<"group.join", { groupId: string }>;
 
-export type GroupJoinedEvent = RealtimeEvent<"group.joined", { groupId: string }>;
+export type GroupJoinedEvent = RealtimeEvent<
+  "group.joined",
+  { groupId: string; onlineUserIds: string[] }
+>;
 
 export type HeartbeatEvent = RealtimeEvent<"heartbeat", Record<string, never>>;
 
@@ -91,7 +94,16 @@ export type SosAckedEvent = RealtimeEvent<
 
 export type PttStateEvent =
   | RealtimeEvent<"ptt.granted", { sessionId: string; groupId: string; targetUserId?: string }>
-  | RealtimeEvent<"ptt.busy", { groupId: string; speakerUserId: string }>
+  | RealtimeEvent<
+      "ptt.busy",
+      {
+        groupId: string;
+        speakerUserId: string;
+        queued: boolean;
+        queuePosition?: number;
+        queueFull?: boolean;
+      }
+    >
   | RealtimeEvent<
       "ptt.started",
       { sessionId: string; groupId: string; speakerUserId: string; targetUserId?: string }
@@ -109,10 +121,11 @@ export type PttStateEvent =
 
 export type PttStartEvent = RealtimeEvent<
   "ptt.start",
-  { groupId: string; targetUserId?: string }
+  { groupId: string; targetUserId?: string; queue?: boolean }
 >;
 
 export type PttStopEvent = RealtimeEvent<"ptt.stop", { sessionId: string }>;
+export type PttCancelEvent = RealtimeEvent<"ptt.cancel", { groupId: string }>;
 
 export type ErrorEvent = RealtimeEvent<
   "error",

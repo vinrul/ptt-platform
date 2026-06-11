@@ -198,6 +198,29 @@ Response:
 }
 ```
 
+### POST /api/auth/change-password
+
+Request:
+
+```json
+{
+  "currentPassword": "old-password",
+  "newPassword": "new-password"
+}
+```
+
+Password baru minimal 8 karakter dan harus berbeda dari password lama. Setelah
+berhasil, seluruh refresh token user dicabut sehingga perangkat harus login
+ulang. Perubahan dicatat sebagai audit action `auth.password_changed`.
+
+Response:
+
+```json
+{
+  "ok": true
+}
+```
+
 ## Users
 
 ### GET /api/users
@@ -281,6 +304,12 @@ Request:
 ### GET /api/groups/:id
 
 Returns group detail beserta array `members`.
+
+Role `field_user` hanya dapat membaca detail grup jika user tersebut terdaftar
+sebagai anggota grup. Data ini digunakan Android untuk menampilkan target PTT
+grup dan privat. Setiap member memuat `role` akun dan `roleInGroup`. Android
+tidak menampilkan akun dengan role `super_admin` atau `dispatcher` sebagai
+target PTT.
 
 ### PATCH /api/groups/:id
 

@@ -36,4 +36,34 @@ class GroupRepository(
             }
         }
     }
+
+    suspend fun members(session: AuthSession, groupId: String): List<GroupMember> =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("${session.serverUrl}/api/groups/$groupId")
+                .header("Authorization", "Bearer ${session.accessToken}")
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    throw IllegalStateException("Unable to load group members (HTTP ${response.code})")
+                }
+                val items = JSONObject(body).getJSONArray("members")
+                buildList {
+                    for (index in 0 until items.length()) {
+                        val item = items.getJSONObject(index)
+                        add(
+                            GroupMember(
+                                userId = item.getString("userId"),
+                                username = item.getString("username"),
+                                fullName = item.getString("fullName"),
+                                role = item.getString("role"),
+                                roleInGroup = item.getString("roleInGroup"),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
 }

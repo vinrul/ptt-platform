@@ -42,6 +42,24 @@ func TestLoginRejectsInvalidPayload(t *testing.T) {
 	}
 }
 
+func TestChangePasswordRequiresAccessToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := NewRouter(testConfig(), nil, nil)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/auth/change-password",
+		strings.NewReader(`{"currentPassword":"old-password","newPassword":"new-password"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", response.Code)
+	}
+}
+
 func testConfig() config.Config {
 	return config.Config{
 		AppEnv:              "test",

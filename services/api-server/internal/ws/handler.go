@@ -170,6 +170,8 @@ func (h *Handler) readLoop(c *gin.Context, connection *Connection) {
 			h.handleSOSAck(c, connection, event)
 		case "ptt.start":
 			h.handlePTTStart(c, connection, event)
+		case "ptt.cancel":
+			h.handlePTTCancel(connection, event)
 		case "ptt.stop":
 			h.handlePTTStop(c, connection, event)
 		default:
@@ -184,6 +186,7 @@ func (h *Handler) handlePTTStart(c *gin.Context, connection *Connection, event E
 	var payload struct {
 		GroupID      string `json:"groupId"`
 		TargetUserID string `json:"targetUserId"`
+		Queue        bool   `json:"queue"`
 	}
 	if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.GroupID == "" {
 		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "groupId is required", nil))
@@ -194,16 +197,15 @@ func (h *Handler) handlePTTStart(c *gin.Context, connection *Connection, event E
 		return
 	}
 	if payload.TargetUserID != "" {
-		if !isOperatorRole(connection.Role) {
-			connection.Send(NewErrorEvent(event.RequestID, "forbidden", "Only operators can start direct PTT", nil))
-			return
-		}
 		if payload.TargetUserID == connection.UserID {
 			connection.Send(NewErrorEvent(event.RequestID, "validation_error", "targetUserId must be another user", nil))
 			return
 		}
-		if !h.hub.UserHasJoinedGroup(payload.TargetUserID, payload.GroupID) {
-			connection.Send(NewErrorEvent(event.RequestID, "target_offline", "Target user is not online in this group", nil))
+		if err := h.repository.CanJoinGroup(c.Request.Context(), payload.TargetUserID, payload.GroupID); errors.Is(err, ErrGroupNotAllowed) {
+			connection.Send(NewErrorEvent(event.RequestID, "forbidden", "Target user is not an active member of this group", nil))
+			return
+		} else if err != nil {
+			connection.Send(NewErrorEvent(event.RequestID, "server_error", "Unable to validate target group membership", nil))
 			return
 		}
 	}
@@ -216,9 +218,26 @@ func (h *Handler) handlePTTStart(c *gin.Context, connection *Connection, event E
 		payload.TargetUserID,
 	)
 	if errors.Is(err, ptt.ErrBusy) {
+		queuePosition := 0
+		queued := false
+		queueFull := false
+		if payload.Queue {
+			queuePosition, err = h.ptt.Enqueue(ptt.QueuedRequest{
+				GroupID:           payload.GroupID,
+				SpeakerUserID:     connection.UserID,
+				TargetUserID:      payload.TargetUserID,
+				OwnerConnectionID: connection.ID,
+				RequestID:         event.RequestID,
+			})
+			queued = err == nil
+			queueFull = errors.Is(err, ptt.ErrQueueFull)
+		}
 		connection.Send(NewEvent("ptt.busy", event.RequestID, map[string]any{
 			"groupId":       payload.GroupID,
 			"speakerUserId": busy.SpeakerUserID,
+			"queued":        queued,
+			"queuePosition": emptyIntToNil(queuePosition),
+			"queueFull":     queueFull,
 		}))
 		return
 	}
@@ -227,11 +246,17 @@ func (h *Handler) handlePTTStart(c *gin.Context, connection *Connection, event E
 		return
 	}
 
-	connection.Send(NewEvent("ptt.granted", event.RequestID, map[string]any{
+	h.grantPTT(connection, session, event.RequestID)
+}
+
+func (h *Handler) grantPTT(connection *Connection, session ptt.Session, requestID string) bool {
+	if !connection.Send(NewEvent("ptt.granted", requestID, map[string]any{
 		"sessionId":    session.ID,
 		"groupId":      session.GroupID,
 		"targetUserId": emptyToNil(session.TargetUserID),
-	}))
+	})) {
+		return false
+	}
 	started := NewEvent("ptt.started", "", map[string]any{
 		"sessionId":     session.ID,
 		"groupId":       session.GroupID,
@@ -244,7 +269,64 @@ func (h *Handler) handlePTTStart(c *gin.Context, connection *Connection, event E
 		h.hub.BroadcastToGroup(session.GroupID, started)
 	}
 
-	h.triggerFcmPttWakeup(session.GroupID, session.SpeakerUserID, session.ID)
+	if session.TargetUserID == "" {
+		h.triggerFcmPttWakeup(session.GroupID, session.SpeakerUserID, session.ID)
+	} else if !h.hub.UserHasJoinedGroup(session.TargetUserID, session.GroupID) {
+		h.triggerFcmDirectPttWakeup(
+			session.GroupID,
+			session.SpeakerUserID,
+			session.TargetUserID,
+			session.ID,
+		)
+	}
+	return true
+}
+
+func (h *Handler) handlePTTCancel(connection *Connection, event Event) {
+	var payload struct {
+		GroupID string `json:"groupId"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.GroupID == "" {
+		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "groupId is required", nil))
+		return
+	}
+	h.ptt.CancelQueued(payload.GroupID, connection.ID)
+}
+
+func (h *Handler) triggerFcmDirectPttWakeup(
+	groupID string,
+	speakerUserID string,
+	targetUserID string,
+	sessionID string,
+) {
+	if h.firebase == nil {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		targets, err := h.repository.GetOfflineGroupMembersPushTokens(ctx, groupID, speakerUserID)
+		if err != nil {
+			log.Printf("[Firebase] Error fetching direct PTT push target %s: %v", targetUserID, err)
+			return
+		}
+
+		for _, target := range targets {
+			if target.UserID != targetUserID {
+				continue
+			}
+			if h.hub.UserHasJoinedGroup(targetUserID, groupID) {
+				return
+			}
+			if err := h.firebase.SendPttWakeup(ctx, target.PushToken, groupID, sessionID); err != nil {
+				log.Printf("[Firebase] Error sending direct PTT wakeup to user %s: %v", targetUserID, err)
+			} else {
+				log.Printf("[Firebase] Successfully sent direct PTT wakeup to user %s", targetUserID)
+			}
+		}
+	}()
 }
 
 func (h *Handler) triggerFcmPttWakeup(groupID string, speakerUserID string, sessionID string) {
@@ -301,6 +383,7 @@ func (h *Handler) handlePTTStop(c *gin.Context, connection *Connection, event Ev
 	}
 
 	h.broadcastPTTStopped(session, event.RequestID, "user_stop")
+	h.promoteNextPTT(session.GroupID)
 }
 
 func (h *Handler) handleAudioFrame(connection *Connection, data []byte) {
@@ -331,6 +414,40 @@ func (h *Handler) releaseConnectionPTT(connection *Connection) {
 	defer cancel()
 	for _, session := range h.ptt.ReleaseConnection(ctx, connection.ID) {
 		h.broadcastPTTStopped(session, "", "disconnect")
+		h.promoteNextPTT(session.GroupID)
+	}
+}
+
+func (h *Handler) promoteNextPTT(groupID string) {
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		session, request, err := h.ptt.StartNext(ctx, groupID)
+		cancel()
+		if err != nil {
+			log.Printf("PTT queue promotion failed group=%s: %v", groupID, err)
+			return
+		}
+		if request == nil {
+			return
+		}
+
+		connection := h.hub.ConnectionByID(request.OwnerConnectionID)
+		if connection != nil &&
+			connection.UserID == request.SpeakerUserID &&
+			connection.HasJoinedGroup(groupID) &&
+			h.grantPTT(connection, session, request.RequestID) {
+			return
+		}
+
+		ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
+		_, _ = h.ptt.Stop(
+			ctx,
+			session.ID,
+			request.SpeakerUserID,
+			request.OwnerConnectionID,
+			"disconnect",
+		)
+		cancel()
 	}
 }
 
@@ -358,6 +475,13 @@ func binaryUUID(value []byte) string {
 		value[8:10],
 		value[10:16],
 	)
+}
+
+func emptyIntToNil(value int) any {
+	if value == 0 {
+		return nil
+	}
+	return value
 }
 
 func emptyToNil(value string) any {
@@ -471,8 +595,10 @@ func (h *Handler) handleGroupJoin(c *gin.Context, connection *Connection, event 
 
 	connection.JoinGroup(payload.GroupID)
 	connection.Send(NewEvent("group.joined", event.RequestID, map[string]any{
-		"groupId": payload.GroupID,
+		"groupId":       payload.GroupID,
+		"onlineUserIds": h.hub.OnlineUserIDsInGroup(payload.GroupID),
 	}))
+	h.hub.BroadcastPresenceToGroup(payload.GroupID, connection.UserID, "online")
 }
 
 func HeartbeatWindow() time.Duration {

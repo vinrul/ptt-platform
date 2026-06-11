@@ -1,4 +1,5 @@
 import type { GroupSummary, UserSummary } from "@ptt-fleet/shared-types";
+import { useAuthStore } from "../features/auth/authStore";
 
 export type AuthUser = UserSummary;
 
@@ -23,6 +24,7 @@ export interface GroupMember {
   userId: string;
   username: string;
   fullName: string;
+  role: "super_admin" | "dispatcher" | "supervisor" | "field_user";
   roleInGroup: "member" | "dispatcher" | "supervisor";
   joinedAt: string;
 }
@@ -70,6 +72,7 @@ interface ApiErrorBody {
 }
 
 const configuredBaseUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "";
+let refreshPromise: Promise<AuthSession> | null = null;
 
 export async function login(
   username: string,
@@ -170,36 +173,147 @@ export async function fetchAuditLogs(accessToken: string): Promise<AuditListResp
   return request<AuditListResponse>("/api/audit-logs?pageSize=100", {}, accessToken);
 }
 
+export async function ensureAccessToken(forceRefresh = false): Promise<string> {
+  const session = useAuthStore.getState().session;
+  if (!session) {
+    throw new Error("Session is no longer available. Please log in again.");
+  }
+  if (!forceRefresh && !isTokenExpiring(session.accessToken)) {
+    return session.accessToken;
+  }
+  return (await refreshSession()).accessToken;
+}
+
 export async function request<T>(
   path: string,
   options: RequestInit,
   accessToken?: string,
 ): Promise<T> {
+  const token = accessToken
+    ? await currentAccessToken(accessToken)
+    : undefined;
+  const response = await performRequest(path, options, token);
+  if (response.ok) {
+    return parseResponse<T>(response);
+  }
+
+  const error = await parseApiError(response);
+  if (token && response.status === 401 && error.code === "unauthorized") {
+    const storedToken = useAuthStore.getState().session?.accessToken;
+    const nextToken = storedToken && storedToken !== token
+      ? storedToken
+      : await ensureAccessToken(true);
+    const retryResponse = await performRequest(path, options, nextToken);
+    if (retryResponse.ok) {
+      return parseResponse<T>(retryResponse);
+    }
+    throw await parseApiError(retryResponse);
+  }
+  throw error;
+}
+
+async function currentAccessToken(fallbackToken: string): Promise<string> {
+  const session = useAuthStore.getState().session;
+  if (!session) return fallbackToken;
+  return isTokenExpiring(session.accessToken)
+    ? ensureAccessToken(true)
+    : session.accessToken;
+}
+
+async function refreshSession(): Promise<AuthSession> {
+  if (refreshPromise) return refreshPromise;
+
+  const session = useAuthStore.getState().session;
+  if (!session) {
+    throw new Error("Session is no longer available. Please log in again.");
+  }
+
+  refreshPromise = (async () => {
+    const response = await performRequest(
+      "/api/auth/refresh",
+      {
+        method: "POST",
+        body: JSON.stringify({ refreshToken: session.refreshToken }),
+      },
+      undefined,
+    );
+    if (!response.ok) {
+      const error = await parseApiError(response);
+      if (response.status === 401 || response.status === 403) {
+        useAuthStore.getState().clearSession();
+      }
+      throw error;
+    }
+
+    const refreshed = await parseResponse<AuthSession>(response);
+    useAuthStore.getState().setSession(refreshed);
+    return refreshed;
+  })().finally(() => {
+    refreshPromise = null;
+  });
+
+  return refreshPromise;
+}
+
+async function performRequest(
+  path: string,
+  options: RequestInit,
+  accessToken?: string,
+): Promise<Response> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
   if (accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const response = await fetch(`${configuredBaseUrl}${path}`, {
+  return fetch(`${configuredBaseUrl}${path}`, {
     ...options,
     headers,
   });
-  if (!response.ok) {
-    let message = "Request failed";
-    try {
-      const body = (await response.json()) as ApiErrorBody;
-      message = body.error?.message ?? message;
-    } catch {
-      message = response.statusText || message;
-    }
-    throw new Error(message);
-  }
+}
 
+async function parseResponse<T>(response: Response): Promise<T> {
   if (response.status === 204) {
     return undefined as T;
   }
   return (await response.json()) as T;
+}
+
+async function parseApiError(response: Response): Promise<ApiError> {
+  let code = "";
+  let message = "Request failed";
+  try {
+    const body = (await response.json()) as ApiErrorBody;
+    code = body.error?.code ?? "";
+    message = body.error?.message ?? message;
+  } catch {
+    message = response.statusText || message;
+  }
+  return new ApiError(response.status, code, message);
+}
+
+function isTokenExpiring(accessToken: string): boolean {
+  try {
+    const [, payload] = accessToken.split(".");
+    if (!payload) return false;
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const normalized = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    const claims = JSON.parse(window.atob(normalized)) as { exp?: number };
+    return typeof claims.exp === "number" && claims.exp * 1_000 <= Date.now() + 30_000;
+  } catch {
+    return false;
+  }
+}
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
 }
 
 function browserDeviceName(): string {

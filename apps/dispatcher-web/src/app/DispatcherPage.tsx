@@ -1,6 +1,6 @@
 import type { GroupSummary, PttStateEvent, ServerRealtimeEvent } from "@ptt-fleet/shared-types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchGroup, fetchGroups, fetchUsers } from "../lib/api";
+import { ensureAccessToken, fetchGroup, fetchGroups, fetchUsers } from "../lib/api";
 import { decodeAudioDownlink, encodeAudioUplink } from "../lib/audioEnvelope";
 import { BrowserPttAudio } from "../lib/browserPttAudio";
 import { createRequestId } from "../lib/requestId";
@@ -121,7 +121,7 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     };
 
     const realtime = new RealtimeClient({
-      accessToken: session.accessToken,
+      getAccessToken: ensureAccessToken,
       onEvent: handleRealtimeEvent,
       onBinary: (data) => {
         const frame = decodeAudioDownlink(data);

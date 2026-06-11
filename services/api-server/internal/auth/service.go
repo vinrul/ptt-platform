@@ -17,6 +17,8 @@ var (
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrUserDisabled        = errors.New("user is disabled")
 	ErrUserNotFound        = errors.New("user not found")
+	ErrCurrentPassword     = errors.New("current password is invalid")
+	ErrPasswordUnchanged   = errors.New("new password must be different")
 )
 
 type User struct {
@@ -234,6 +236,69 @@ func (s *Service) Me(ctx context.Context, userID string) (User, error) {
 		return User{}, ErrUserNotFound
 	}
 	return user, err
+}
+
+func (s *Service) ChangePassword(
+	ctx context.Context,
+	userID string,
+	currentPassword string,
+	newPassword string,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	tx, err := s.store.Postgres.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var passwordHash string
+	err = tx.QueryRow(ctx, `
+		SELECT password_hash
+		FROM users
+		WHERE id = $1 AND status = 'active'
+		FOR UPDATE
+	`, userID).Scan(&passwordHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrUserNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if err := CheckPassword(passwordHash, currentPassword); err != nil {
+		return ErrCurrentPassword
+	}
+	if err := CheckPassword(passwordHash, newPassword); err == nil {
+		return ErrPasswordUnchanged
+	}
+
+	nextHash, err := HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE users
+		SET password_hash = $2, updated_at = now()
+		WHERE id = $1
+	`, userID, nextHash); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE refresh_tokens
+		SET revoked_at = now()
+		WHERE user_id = $1 AND revoked_at IS NULL
+	`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id)
+		VALUES ($1, 'auth.password_changed', 'user', $2)
+	`, userID, userID); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func insertRefreshToken(ctx context.Context, tx pgx.Tx, userID string, deviceID string, token string, ttl time.Duration) error {
