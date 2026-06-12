@@ -109,6 +109,11 @@
     <string name="openstreetmap_attribution">© OpenStreetMap contributors</string>
     <string name="wakeup_overlay_switch">Open app on PTT wakeup</string>
     <string name="wakeup_overlay_description">When off, wakeup keeps audio playback and GPS update in background without opening the app.</string>
+    <string name="profile_default_group_title">DEFAULT CHANNEL</string>
+    <string name="profile_default_group_empty">Choose a default channel for the next app start.</string>
+    <string name="profile_default_group_current">Default channel: %1$s</string>
+    <string name="profile_default_group_saved">Default channel saved: %1$s</string>
+    <string name="profile_save_default_group">Save default channel</string>
     <string name="profile_permissions_title">BACKGROUND ACCESS</string>
     <string name="profile_background_service_title">Background service</string>
     <string name="profile_background_service_enabled">Enabled. Patrol connection can keep running with a foreground notification.</string>

@@ -52,6 +52,7 @@ import id.nuwiarul.pttfleet.audio.AudioRouting
 import id.nuwiarul.pttfleet.databinding.ActivityMainBinding
 import id.nuwiarul.pttfleet.databinding.DialogChangePasswordBinding
 import id.nuwiarul.pttfleet.groups.GroupRepository
+import id.nuwiarul.pttfleet.groups.DefaultGroupPreferenceStore
 import id.nuwiarul.pttfleet.groups.GroupMember
 import id.nuwiarul.pttfleet.groups.GroupSummary
 import id.nuwiarul.pttfleet.groups.GroupLocation
@@ -81,6 +82,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private lateinit var serverSettingsStore: ServerSettingsStore
     private lateinit var wakeNavigationStore: PttWakeNavigationStore
     private lateinit var wakeupOverlayPreferenceStore: WakeupOverlayPreferenceStore
+    private lateinit var defaultGroupPreferenceStore: DefaultGroupPreferenceStore
     private lateinit var firstRunWizardStore: FirstRunWizardStore
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -108,6 +110,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private var pttHeld = false
     private var updatingTrackingSwitch = false
     private var updatingGroupSelection = false
+    private var updatingDefaultGroupSelection = false
     private var updatingWakeupOverlaySwitch = false
     private var pendingWakeNavigation: PttWakeNavigation? = null
     private var firstRunWizardStep = FirstRunWizardStep.BASIC_PERMISSIONS
@@ -227,6 +230,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         serverSettingsStore = ServerSettingsStore(applicationContext)
         wakeNavigationStore = PttWakeNavigationStore(applicationContext)
         wakeupOverlayPreferenceStore = WakeupOverlayPreferenceStore(applicationContext)
+        defaultGroupPreferenceStore = DefaultGroupPreferenceStore(applicationContext)
         firstRunWizardStore = FirstRunWizardStore(applicationContext)
         pendingWakeNavigation = wakeNavigationStore.consume()
         audioEngine = PttAudioEngine(
@@ -265,6 +269,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         binding.backgroundServiceButton.setOnClickListener { enableBackgroundServiceFromProfile() }
         binding.overlayPermissionButton.setOnClickListener { openOverlaySettingsFromProfile() }
         binding.backgroundLocationButton.setOnClickListener { openBackgroundLocationSettingsFromProfile() }
+        binding.saveDefaultGroupButton.setOnClickListener { saveDefaultGroupSelection() }
         binding.mapTalkButton.setOnClickListener { talkToSelectedMapUser() }
         binding.mapDetailCloseButton.setOnClickListener { hideMapUserDetail() }
         binding.locationTrackingSwitch.setOnCheckedChangeListener { _, checked ->
@@ -806,26 +811,91 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                 groupRepository.list(session)
                 }
                 .onSuccess { items ->
-                    groups = items
+                    groups = sortedGroupsByDefault(items)
                     val groupAdapter = ArrayAdapter(
                         this@MainActivity,
                         android.R.layout.simple_spinner_dropdown_item,
-                        items.map { it.name },
+                        groups.map { it.name },
                     )
                     updatingGroupSelection = true
                     binding.groupSpinner.adapter = groupAdapter
                     binding.mapGroupSpinner.adapter = groupAdapter
+                    binding.defaultGroupSpinner.adapter = groupAdapter
                     updatingGroupSelection = false
-                    if (items.isNotEmpty()) {
+                    syncDefaultGroupSpinner()
+                    if (groups.isNotEmpty()) {
                         selectGroup(0, syncMainSpinner = true, syncMapSpinner = true)
                     }
                     applyPendingWakeNavigation()
                     binding.pttStatusText.setText(
-                        if (items.isEmpty()) R.string.no_groups else R.string.channel_joining,
+                        if (groups.isEmpty()) R.string.no_groups else R.string.channel_joining,
                     )
+                    updateDefaultGroupStatus()
                 }
                 .onFailure { binding.pttStatusText.text = it.message }
         }
+    }
+
+    private fun sortedGroupsByDefault(items: List<GroupSummary>): List<GroupSummary> {
+        val defaultGroupId = defaultGroupPreferenceStore.getDefaultGroupId() ?: return items
+        if (items.none { it.id == defaultGroupId }) {
+            defaultGroupPreferenceStore.clear()
+            return items
+        }
+        return items.sortedWith(compareByDescending<GroupSummary> { it.id == defaultGroupId }
+            .thenBy { it.name.lowercase() })
+    }
+
+    private fun syncDefaultGroupSpinner() {
+        val defaultGroupId = defaultGroupPreferenceStore.getDefaultGroupId()
+        val selectedIndex = defaultGroupId
+            ?.let { groupId -> groups.indexOfFirst { it.id == groupId } }
+            ?.takeIf { it >= 0 }
+            ?: 0
+        if (groups.isNotEmpty() && binding.defaultGroupSpinner.selectedItemPosition != selectedIndex) {
+            updatingDefaultGroupSelection = true
+            binding.defaultGroupSpinner.setSelection(selectedIndex)
+            updatingDefaultGroupSelection = false
+        }
+    }
+
+    private fun updateDefaultGroupStatus(savedMessage: String? = null) {
+        if (savedMessage != null) {
+            binding.defaultGroupStatusText.text = savedMessage
+            return
+        }
+        val defaultGroup = defaultGroupPreferenceStore.getDefaultGroupId()
+            ?.let { groupId -> groups.firstOrNull { it.id == groupId } }
+        binding.defaultGroupStatusText.text = defaultGroup?.let {
+            getString(R.string.profile_default_group_current, it.name)
+        } ?: getString(R.string.profile_default_group_empty)
+    }
+
+    private fun saveDefaultGroupSelection() {
+        if (updatingDefaultGroupSelection) return
+        val group = groups.getOrNull(binding.defaultGroupSpinner.selectedItemPosition) ?: return
+        val currentGroupId = selectedGroupId()
+        defaultGroupPreferenceStore.setDefaultGroupId(group.id)
+        groups = sortedGroupsByDefault(groups)
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            groups.map { it.name },
+        )
+        updatingGroupSelection = true
+        binding.groupSpinner.adapter = adapter
+        binding.mapGroupSpinner.adapter = adapter
+        binding.defaultGroupSpinner.adapter = adapter
+        currentGroupId
+            ?.let { groupId -> groups.indexOfFirst { it.id == groupId } }
+            ?.takeIf { it >= 0 }
+            ?.let { position ->
+                binding.groupSpinner.setSelection(position)
+                binding.mapGroupSpinner.setSelection(position)
+            }
+        updatingGroupSelection = false
+        syncDefaultGroupSpinner()
+        updateDefaultGroupStatus(getString(R.string.profile_default_group_saved, group.name))
     }
 
     private fun selectGroup(

@@ -427,6 +427,44 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="22dp"
                         android:letterSpacing="0.12"
+                        android:text="@string/profile_default_group_title"
+                        android:textColor="@color/fleet_warning"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <Spinner
+                        android:id="@+id/defaultGroupSpinner"
+                        android:layout_width="match_parent"
+                        android:layout_height="50dp"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/input_background"
+                        android:paddingHorizontal="12dp" />
+
+                    <TextView
+                        android:id="@+id/defaultGroupStatusText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="@string/profile_default_group_empty"
+                        android:textColor="@color/fleet_muted"
+                        android:textSize="12sp" />
+
+                    <Button
+                        android:id="@+id/saveDefaultGroupButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="46dp"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/button_primary"
+                        android:text="@string/profile_save_default_group"
+                        android:textAllCaps="false"
+                        android:textColor="@color/fleet_primary_dark"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="22dp"
+                        android:letterSpacing="0.12"
                         android:text="@string/profile_permissions_title"
                         android:textColor="@color/fleet_warning"
                         android:textSize="12sp"
