@@ -20,6 +20,7 @@ import id.nuwiarul.pttfleet.audio.PttAudioEngine
 import id.nuwiarul.pttfleet.audio.AudioRouting
 import id.nuwiarul.pttfleet.auth.SecureTokenStore
 import id.nuwiarul.pttfleet.auth.SessionManager
+import id.nuwiarul.pttfleet.fcm.WakeupOverlayPreferenceStore
 import id.nuwiarul.pttfleet.location.GpsSample
 import id.nuwiarul.pttfleet.location.LocationTracker
 import id.nuwiarul.pttfleet.location.TrackingPreferenceStore
@@ -108,7 +109,9 @@ class PatrolService : Service(), RealtimeListener {
                     .putString(KEY_GROUP_ID, groupId)
                     .apply()
             }
-            wakeScreenBriefly()
+            if (shouldOpenAppOnWakeup()) {
+                wakeScreenBriefly()
+            }
         }
         val shouldSendPttLocation = intent?.action == ACTION_PTT_LOCATION_SNAPSHOT
         if (intent?.action == ACTION_JOIN_GROUP) {
@@ -394,7 +397,14 @@ class PatrolService : Service(), RealtimeListener {
             .addAction(0, getString(R.string.background_stop), stopIntent)
 
         // Use full screen intent for PTT voice receiving/playing to bring MainActivity to foreground
-        if (status == getString(R.string.background_receiving) || status.contains("playing") || status.contains("Playing")) {
+        if (
+            shouldOpenAppOnWakeup() &&
+            (
+                status == getString(R.string.background_receiving) ||
+                    status.contains("playing") ||
+                    status.contains("Playing")
+                )
+        ) {
             builder.setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setFullScreenIntent(openIntent, true)
@@ -407,6 +417,9 @@ class PatrolService : Service(), RealtimeListener {
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, buildNotification(status))
     }
+
+    private fun shouldOpenAppOnWakeup(): Boolean =
+        WakeupOverlayPreferenceStore(applicationContext).canOpenAppOnWakeup()
 
     companion object {
         private const val NOTIFICATION_CHANNEL_ID = "patrol_connection"

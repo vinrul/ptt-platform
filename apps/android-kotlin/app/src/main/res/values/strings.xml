@@ -62,6 +62,7 @@
     <string name="sos_sent">SOS alert sent to dispatcher.</string>
     <string name="sos_not_sent">Unable to send SOS while realtime is offline.</string>
     <string name="cancel">Cancel</string>
+    <string name="close">Close</string>
     <string name="hold_to_talk">Hold to talk</string>
     <string name="channel_joining">Joining channel…</string>
     <string name="channel_not_ready">Select and join a channel first.</string>
@@ -85,6 +86,8 @@
     <string name="map_accuracy_meters">%1$.0f m</string>
     <string name="talk_to_map_user">Talk to this user</string>
     <string name="openstreetmap_attribution">© OpenStreetMap contributors</string>
+    <string name="wakeup_overlay_switch">Open app on PTT wakeup</string>
+    <string name="wakeup_overlay_description">When off, wakeup keeps audio playback and GPS update in background without opening the app.</string>
     <string name="ptt_ready_private">Private PTT ready for %1$s.</string>
     <string name="ptt_requesting_private">Requesting private channel to %1$s...</string>
     <string name="ptt_ready">Channel ready · hold the button to talk.</string>

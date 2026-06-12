@@ -18,9 +18,27 @@ import android.widget.RadioButton
 import androidx.appcompat.app.AlertDialog
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Map
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import id.nuwiarul.pttfleet.auth.AuthRepository
@@ -37,6 +55,7 @@ import id.nuwiarul.pttfleet.groups.GroupSummary
 import id.nuwiarul.pttfleet.groups.GroupLocation
 import id.nuwiarul.pttfleet.fcm.PttWakeNavigation
 import id.nuwiarul.pttfleet.fcm.PttWakeNavigationStore
+import id.nuwiarul.pttfleet.fcm.WakeupOverlayPreferenceStore
 import id.nuwiarul.pttfleet.location.GpsSample
 import id.nuwiarul.pttfleet.location.LocationTracker
 import id.nuwiarul.pttfleet.map.GroupMapController
@@ -58,6 +77,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private lateinit var sessionManager: SessionManager
     private lateinit var serverSettingsStore: ServerSettingsStore
     private lateinit var wakeNavigationStore: PttWakeNavigationStore
+    private lateinit var wakeupOverlayPreferenceStore: WakeupOverlayPreferenceStore
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
@@ -82,7 +102,10 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private var receivedAudioFrames = 0L
     private var pttHeld = false
     private var updatingTrackingSwitch = false
+    private var updatingGroupSelection = false
+    private var updatingWakeupOverlaySwitch = false
     private var pendingWakeNavigation: PttWakeNavigation? = null
+    private val selectedTabState: MutableState<SessionTab> = mutableStateOf(SessionTab.HOME)
     private val loadingGroupMemberIds = mutableSetOf<String>()
     private val mapLocations = mutableMapOf<String, GroupLocation>()
     private var selectedMapLocation: GroupLocation? = null
@@ -152,10 +175,12 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         applySystemBarInsets()
+        configureBottomNavigation()
 
         sessionManager = SessionManager.getInstance(applicationContext)
         serverSettingsStore = ServerSettingsStore(applicationContext)
         wakeNavigationStore = PttWakeNavigationStore(applicationContext)
+        wakeupOverlayPreferenceStore = WakeupOverlayPreferenceStore(applicationContext)
         pendingWakeNavigation = wakeNavigationStore.consume()
         audioEngine = PttAudioEngine(
             onEncodedFrame = { payload ->
@@ -181,11 +206,15 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         }
         binding.changePasswordButton.setOnClickListener { showChangePasswordDialog() }
         binding.logoutButton.setOnClickListener { logout() }
-        binding.homeTabButton.setOnClickListener { showTab(SessionTab.HOME) }
-        binding.targetTabButton.setOnClickListener { showTab(SessionTab.TARGET) }
-        binding.mapTabButton.setOnClickListener { showTab(SessionTab.MAP) }
-        binding.profileTabButton.setOnClickListener { showTab(SessionTab.PROFILE) }
+        binding.wakeupOverlaySwitch.setOnCheckedChangeListener { _, checked ->
+            if (updatingWakeupOverlaySwitch) return@setOnCheckedChangeListener
+            wakeupOverlayPreferenceStore.setEnabled(checked)
+            if (checked) {
+                requestSystemAlertWindowPermission()
+            }
+        }
         binding.mapTalkButton.setOnClickListener { talkToSelectedMapUser() }
+        binding.mapDetailCloseButton.setOnClickListener { hideMapUserDetail() }
         binding.locationTrackingSwitch.setOnCheckedChangeListener { _, checked ->
             if (updatingTrackingSwitch) return@setOnCheckedChangeListener
             if (checked) {
@@ -196,19 +225,10 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         }
         binding.sosButton.setOnClickListener { confirmSos() }
         binding.groupSpinner.onItemSelectedListener = GroupSelectionListener { position ->
-            groups.getOrNull(position)?.let { group ->
-                joinedGroupId = null
-                targetUserId = null
-                onlineUserIds.clear()
-                binding.pttButton.isEnabled = false
-                binding.targetPttButton.isEnabled = false
-                renderGroupMembers(emptyList())
-                clearMapLocations()
-                realtimeClient.joinGroup(group.id)
-                PatrolService.joinGroup(applicationContext, group.id)
-                loadGroupMembers(group.id)
-                loadGroupLocations(group.id)
-            }
+            selectGroup(position, syncMapSpinner = true)
+        }
+        binding.mapGroupSpinner.onItemSelectedListener = GroupSelectionListener { position ->
+            selectGroup(position, syncMainSpinner = true)
         }
         configurePttButton(binding.pttButton) { null }
         configurePttButton(binding.targetPttButton) { targetUserId }
@@ -217,18 +237,25 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun applySystemBarInsets() {
-        val navigationPadding = resources.getDimensionPixelSize(R.dimen.bottom_navigation_padding)
         ViewCompat.setOnApplyWindowInsetsListener(binding.rootLayout) { _, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            binding.bottomNavigation.updatePadding(
-                left = navigationPadding,
-                top = navigationPadding,
-                right = navigationPadding,
-                bottom = navigationPadding + systemBars.bottom,
-            )
+            binding.bottomNavigation.updatePadding(left = 0, top = 0, right = 0, bottom = 0)
             insets
         }
         ViewCompat.requestApplyInsets(binding.rootLayout)
+    }
+
+    private fun configureBottomNavigation() {
+        binding.bottomNavigation.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed,
+        )
+        binding.bottomNavigation.setContent {
+            PttFleetTheme {
+                PttBottomNavigation(
+                    selectedTab = selectedTabState.value,
+                    onTabSelected = ::showTab,
+                )
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -260,6 +287,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             setTrackingSwitchChecked(false)
             binding.locationStatusText.setText(R.string.location_stopped)
         }
+        syncWakeupOverlaySwitch()
 
         PatrolService.onLocationChangedListener = { sample ->
             runOnUiThread {
@@ -336,6 +364,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             session.user.username,
             session.user.role.replace('_', ' '),
         )
+        syncWakeupOverlaySwitch()
         binding.connectionDetailText.setText(R.string.realtime_opening)
         showTab(
             if (pendingWakeNavigation?.isDirect == true) SessionTab.TARGET else SessionTab.HOME,
@@ -361,6 +390,8 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun showLogin() {
+        binding.contentScroll.visibility = View.VISIBLE
+        binding.mapPanel.visibility = View.GONE
         binding.settingsButton.visibility = View.VISIBLE
         binding.loginTitle.visibility = View.VISIBLE
         binding.loginSubtitle.visibility = View.VISIBLE
@@ -463,14 +494,21 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                 val session = sessionManager.validSession()
                     ?: throw IllegalStateException(getString(R.string.login_failed))
                 groupRepository.list(session)
-            }
+                }
                 .onSuccess { items ->
                     groups = items
-                    binding.groupSpinner.adapter = ArrayAdapter(
+                    val groupAdapter = ArrayAdapter(
                         this@MainActivity,
                         android.R.layout.simple_spinner_dropdown_item,
                         items.map { it.name },
                     )
+                    updatingGroupSelection = true
+                    binding.groupSpinner.adapter = groupAdapter
+                    binding.mapGroupSpinner.adapter = groupAdapter
+                    updatingGroupSelection = false
+                    if (items.isNotEmpty()) {
+                        selectGroup(0, syncMainSpinner = true, syncMapSpinner = true)
+                    }
                     applyPendingWakeNavigation()
                     binding.pttStatusText.setText(
                         if (items.isEmpty()) R.string.no_groups else R.string.channel_joining,
@@ -479,6 +517,39 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                 .onFailure { binding.pttStatusText.text = it.message }
         }
     }
+
+    private fun selectGroup(
+        position: Int,
+        syncMainSpinner: Boolean = false,
+        syncMapSpinner: Boolean = false,
+    ) {
+        if (updatingGroupSelection) return
+        val group = groups.getOrNull(position) ?: return
+
+        updatingGroupSelection = true
+        if (syncMainSpinner && binding.groupSpinner.selectedItemPosition != position) {
+            binding.groupSpinner.setSelection(position)
+        }
+        if (syncMapSpinner && binding.mapGroupSpinner.selectedItemPosition != position) {
+            binding.mapGroupSpinner.setSelection(position)
+        }
+        updatingGroupSelection = false
+
+        joinedGroupId = null
+        targetUserId = null
+        onlineUserIds.clear()
+        binding.pttButton.isEnabled = false
+        binding.targetPttButton.isEnabled = false
+        renderGroupMembers(emptyList())
+        clearMapLocations()
+        realtimeClient.joinGroup(group.id)
+        PatrolService.joinGroup(applicationContext, group.id)
+        loadGroupMembers(group.id)
+        loadGroupLocations(group.id)
+    }
+
+    private fun selectedGroupId(): String? =
+        groups.getOrNull(binding.groupSpinner.selectedItemPosition)?.id
 
     private fun loadGroupMembers(groupId: String) {
         if (!loadingGroupMemberIds.add(groupId)) return
@@ -492,7 +563,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                         ?.let { groupRepository.members(it, groupId) }
                         ?: throw IllegalStateException(getString(R.string.login_failed))
                 }.onSuccess { members ->
-                    if (groups.getOrNull(binding.groupSpinner.selectedItemPosition)?.id != groupId) {
+                    if (selectedGroupId() != groupId) {
                         return@onSuccess
                     }
                     val wakeNavigation = pendingWakeNavigation
@@ -536,7 +607,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                     ?: throw IllegalStateException(getString(R.string.login_failed))
                 groupRepository.latestLocations(session, groupId)
             }.onSuccess { items ->
-                if (groups.getOrNull(binding.groupSpinner.selectedItemPosition)?.id != groupId) {
+                if (selectedGroupId() != groupId) {
                     return@onSuccess
                 }
                 val visibleItems = items.filter {
@@ -559,7 +630,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private fun clearMapLocations() {
         mapLocations.clear()
         selectedMapLocation = null
-        binding.mapUserDetailPanel.visibility = View.GONE
+        hideMapUserDetail()
         binding.mapStatusText.setText(R.string.map_waiting)
         groupMapController.clear()
     }
@@ -581,6 +652,11 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             accuracy,
         )
         binding.mapTalkButton.isEnabled = groupMembers.any { it.userId == location.userId }
+    }
+
+    private fun hideMapUserDetail() {
+        selectedMapLocation = null
+        binding.mapUserDetailPanel.visibility = View.GONE
     }
 
     private fun talkToSelectedMapUser() {
@@ -728,19 +804,16 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun showTab(tab: SessionTab) {
+        selectedTabState.value = tab
+        val showMap = tab == SessionTab.MAP
+        binding.contentScroll.visibility = if (showMap) View.GONE else View.VISIBLE
+        binding.mapPanel.visibility = if (showMap) View.VISIBLE else View.GONE
         binding.homePanel.visibility = if (tab == SessionTab.HOME) View.VISIBLE else View.GONE
         binding.targetPanel.visibility = if (tab == SessionTab.TARGET) View.VISIBLE else View.GONE
-        binding.mapPanel.visibility = if (tab == SessionTab.MAP) View.VISIBLE else View.GONE
         binding.profilePanel.visibility = if (tab == SessionTab.PROFILE) View.VISIBLE else View.GONE
         binding.pttStatusText.visibility =
             if (tab == SessionTab.PROFILE) View.GONE else View.VISIBLE
 
-        val selectedColor = ContextCompat.getColor(this, R.color.fleet_primary)
-        val idleColor = ContextCompat.getColor(this, R.color.fleet_muted)
-        binding.homeTabButton.setTextColor(if (tab == SessionTab.HOME) selectedColor else idleColor)
-        binding.targetTabButton.setTextColor(if (tab == SessionTab.TARGET) selectedColor else idleColor)
-        binding.mapTabButton.setTextColor(if (tab == SessionTab.MAP) selectedColor else idleColor)
-        binding.profileTabButton.setTextColor(if (tab == SessionTab.PROFILE) selectedColor else idleColor)
         if (tab != SessionTab.PROFILE) {
             updateReadyStatus()
         }
@@ -798,6 +871,12 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         updatingTrackingSwitch = true
         binding.locationTrackingSwitch.isChecked = checked
         updatingTrackingSwitch = false
+    }
+
+    private fun syncWakeupOverlaySwitch() {
+        updatingWakeupOverlaySwitch = true
+        binding.wakeupOverlaySwitch.isChecked = wakeupOverlayPreferenceStore.isEnabled()
+        updatingWakeupOverlaySwitch = false
     }
 
     private fun handleLocation(sample: GpsSample) {
@@ -1031,6 +1110,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun requestSystemAlertWindowPermission() {
+        if (!wakeupOverlayPreferenceStore.isEnabled()) return
         if (!Settings.canDrawOverlays(this)) {
             AlertDialog.Builder(this)
                 .setTitle(R.string.permission_draw_overlays_title)
@@ -1071,4 +1151,56 @@ private enum class SessionTab {
     TARGET,
     MAP,
     PROFILE,
+}
+
+private data class BottomNavItem(
+    val tab: SessionTab,
+    val labelRes: Int,
+    val icon: ImageVector,
+)
+
+@Composable
+private fun PttFleetTheme(content: @Composable () -> Unit) {
+    val colors = darkColorScheme(
+        primary = Color(0xFF34D399),
+        onPrimary = Color(0xFF06251A),
+        secondary = Color(0xFFF59E0B),
+        background = Color(0xFF08110F),
+        surface = Color(0xFF101815),
+        surfaceContainer = Color(0xFF14211D),
+        onSurface = Color(0xFFEAFBF4),
+        onSurfaceVariant = Color(0xFF8EA99C),
+    )
+    MaterialTheme(
+        colorScheme = if (isSystemInDarkTheme()) colors else colors,
+        content = content,
+    )
+}
+
+@Composable
+private fun PttBottomNavigation(
+    selectedTab: SessionTab,
+    onTabSelected: (SessionTab) -> Unit,
+) {
+    val items = listOf(
+        BottomNavItem(SessionTab.HOME, R.string.tab_home, Icons.Rounded.Home),
+        BottomNavItem(SessionTab.TARGET, R.string.tab_talk_target, Icons.Rounded.Person),
+        BottomNavItem(SessionTab.MAP, R.string.tab_map, Icons.Rounded.Map),
+        BottomNavItem(SessionTab.PROFILE, R.string.tab_profile, Icons.Rounded.AccountCircle),
+    )
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+        items.forEach { item ->
+            NavigationBarItem(
+                selected = selectedTab == item.tab,
+                onClick = { onTabSelected(item.tab) },
+                icon = {
+                    Icon(
+                        imageVector = item.icon,
+                        contentDescription = stringResource(item.labelRes),
+                    )
+                },
+                label = { Text(stringResource(item.labelRes)) },
+            )
+        }
+    }
 }

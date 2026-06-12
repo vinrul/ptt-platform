@@ -2,17 +2,24 @@ package id.nuwiarul.pttfleet.map
 
 import android.os.Bundle
 import id.nuwiarul.pttfleet.groups.GroupLocation
-import org.maplibre.android.annotations.Marker
-import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.PropertyFactory.circleColor
+import org.maplibre.android.style.layers.PropertyFactory.circleRadius
+import org.maplibre.android.style.layers.PropertyFactory.circleStrokeColor
+import org.maplibre.android.style.layers.PropertyFactory.circleStrokeWidth
+import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.Point
 
 class GroupMapController(
     private val mapView: MapView,
@@ -20,8 +27,6 @@ class GroupMapController(
 ) {
     private var map: MapLibreMap? = null
     private val locations = mutableMapOf<String, GroupLocation>()
-    private val markersByUserId = mutableMapOf<String, Marker>()
-    private val userIdsByMarkerId = mutableMapOf<Long, String>()
 
     fun onCreate(savedInstanceState: Bundle?) {
         mapView.onCreate(savedInstanceState)
@@ -30,11 +35,14 @@ class GroupMapController(
             readyMap.uiSettings.isLogoEnabled = false
             readyMap.uiSettings.isAttributionEnabled = false
             readyMap.setStyle(buildOsmStyle()) {
-                readyMap.setOnMarkerClickListener { marker ->
-                    userIdsByMarkerId[marker.id]
-                        ?.let(locations::get)
-                        ?.let(onLocationSelected)
-                    true
+                readyMap.addOnMapClickListener { point ->
+                    selectedLocationAt(point)?.let(onLocationSelected) != null
+                }
+                readyMap.addOnMapLongClickListener { point ->
+                    selectedLocationAt(point)?.let(onLocationSelected) != null
+                }
+                readyMap.getStyle { style ->
+                    updateSource(style)
                 }
                 renderAll(fitCamera = true)
             }
@@ -49,22 +57,12 @@ class GroupMapController(
 
     fun updateLocation(item: GroupLocation) {
         locations[item.userId] = item
-        val marker = markersByUserId[item.userId]
-        if (marker == null) {
-            addMarker(item)
-        } else {
-            marker.position = LatLng(item.lat, item.lng)
-            marker.title = item.fullName
-            marker.snippet = "@${item.username}"
-        }
+        renderAll(fitCamera = false)
     }
 
     fun clear() {
         locations.clear()
-        val activeMap = map ?: return
-        markersByUserId.values.forEach(activeMap::removeMarker)
-        markersByUserId.clear()
-        userIdsByMarkerId.clear()
+        renderAll(fitCamera = false)
     }
 
     fun onStart() = mapView.onStart()
@@ -83,36 +81,51 @@ class GroupMapController(
 
     private fun renderAll(fitCamera: Boolean) {
         val activeMap = map ?: return
-        val removedUserIds = markersByUserId.keys - locations.keys
-        removedUserIds.forEach { userId ->
-            markersByUserId.remove(userId)?.let { marker ->
-                userIdsByMarkerId.remove(marker.id)
-                activeMap.removeMarker(marker)
-            }
+        activeMap.getStyle { style ->
+            updateSource(style)
+            if (fitCamera) fitCamera()
         }
-        locations.values.forEach { item ->
-            val marker = markersByUserId[item.userId]
-            if (marker == null) {
-                addMarker(item)
-            } else {
-                marker.position = LatLng(item.lat, item.lng)
-                marker.title = item.fullName
-                marker.snippet = "@${item.username}"
-            }
-        }
-        if (fitCamera) fitCamera()
     }
 
-    private fun addMarker(item: GroupLocation) {
-        val activeMap = map ?: return
-        val marker = activeMap.addMarker(
-            MarkerOptions()
-                .position(LatLng(item.lat, item.lng))
-                .title(item.fullName)
-                .snippet("@${item.username}"),
+    private fun updateSource(style: Style) {
+        val source = style.getSourceAs<GeoJsonSource>(USER_LOCATIONS_SOURCE_ID) ?: return
+        source.setGeoJson(
+            FeatureCollection.fromFeatures(
+                locations.values.map(::locationFeature),
+            ),
         )
-        markersByUserId[item.userId] = marker
-        userIdsByMarkerId[marker.id] = item.userId
+    }
+
+    private fun selectedLocationAt(point: LatLng): GroupLocation? {
+        val activeMap = map ?: return null
+        val screenPoint = activeMap.projection.toScreenLocation(point)
+        val selectedUserId = activeMap.queryRenderedFeatures(
+            screenPoint,
+            USER_LOCATIONS_LAYER_ID,
+        ).firstOrNull()?.getStringProperty(USER_ID_PROPERTY)
+        return selectedUserId?.let(locations::get)
+    }
+
+    private fun locationFeature(item: GroupLocation): Feature =
+        Feature.fromGeometry(Point.fromLngLat(item.lng, item.lat)).apply {
+            addStringProperty(USER_ID_PROPERTY, item.userId)
+            addStringProperty("username", item.username)
+            addStringProperty("fullName", item.fullName)
+            addStringProperty("role", item.role)
+            addStringProperty("recordedAt", item.recordedAt)
+        }
+
+    private fun emptyLocations(): FeatureCollection =
+        FeatureCollection.fromFeatures(emptyList<Feature>())
+
+    private fun buildLocationsLayer(): CircleLayer {
+        return CircleLayer(USER_LOCATIONS_LAYER_ID, USER_LOCATIONS_SOURCE_ID)
+            .withProperties(
+                circleRadius(8f),
+                circleColor("#34D399"),
+                circleStrokeColor("#06251A"),
+                circleStrokeWidth(3f),
+            )
     }
 
     private fun fitCamera() {
@@ -141,11 +154,16 @@ class GroupMapController(
         }
         return Style.Builder()
             .withSource(RasterSource(OSM_SOURCE_ID, tiles, 256))
+            .withSource(GeoJsonSource(USER_LOCATIONS_SOURCE_ID, emptyLocations()))
             .withLayer(RasterLayer(OSM_LAYER_ID, OSM_SOURCE_ID))
+            .withLayer(buildLocationsLayer())
     }
 
     private companion object {
         const val OSM_SOURCE_ID = "openstreetmap-source"
         const val OSM_LAYER_ID = "openstreetmap-layer"
+        const val USER_LOCATIONS_SOURCE_ID = "user-locations-source"
+        const val USER_LOCATIONS_LAYER_ID = "user-locations-layer"
+        const val USER_ID_PROPERTY = "userId"
     }
 }

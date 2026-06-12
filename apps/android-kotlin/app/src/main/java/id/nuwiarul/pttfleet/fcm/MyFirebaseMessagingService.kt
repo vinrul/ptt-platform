@@ -47,12 +47,19 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             PatrolService.wakeup(applicationContext, groupId)
 
             // Launch MainActivity to bring the app to the foreground immediately
-            runCatching {
-                val startAppIntent = Intent(applicationContext, id.nuwiarul.pttfleet.MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    putExtra("is_wakeup", true)
+            if (WakeupOverlayPreferenceStore(applicationContext).canOpenAppOnWakeup()) {
+                runCatching {
+                    val startAppIntent =
+                        Intent(applicationContext, id.nuwiarul.pttfleet.MainActivity::class.java).apply {
+                            addFlags(
+                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                            )
+                            putExtra("is_wakeup", true)
+                        }
+                    applicationContext.startActivity(startAppIntent)
                 }
-                applicationContext.startActivity(startAppIntent)
             }
         }
     }
