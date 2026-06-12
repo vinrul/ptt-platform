@@ -32,6 +32,7 @@
     "android:run:release": "bun scripts/android-emulator.ts run apps/android-kotlin/app/build/outputs/apk/release/app-release.apk",
     "android:build:debug": "bun scripts/android-build.ts debug",
     "android:build:release": "bun scripts/android-build.ts release",
+    "android:build:playstore": "bun scripts/android-bundle.ts",
     "dev:web": "bun --filter dispatcher-web dev",
     "build:web": "bun scripts/web-build.ts",
     "lint:web": "bun --filter dispatcher-web lint"

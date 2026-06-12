@@ -124,14 +124,18 @@ Build dari root repository di Windows atau macOS:
 ```bash
 bun run android:build:debug
 bun run android:build:release
+bun run android:build:playstore
 ```
 
 Build debug menjalankan unit test dan menghasilkan APK debug. Build release
-menjalankan lint dan menghasilkan APK yang ditandatangani release:
+menjalankan lint dan menghasilkan APK yang ditandatangani release. Build
+Play Store menghasilkan Android App Bundle (`.aab`) untuk upload ke Google Play
+Console:
 
 ```text
 apps/android-kotlin/app/build/outputs/apk/debug/app-debug.apk
 apps/android-kotlin/app/build/outputs/apk/release/app-release.apk
+apps/android-kotlin/app/build/outputs/bundle/release/app-release.aab
 ```
 
 Install release lokal ke emulator atau perangkat yang terhubung:
