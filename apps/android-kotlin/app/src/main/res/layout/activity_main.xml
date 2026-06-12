@@ -67,6 +67,73 @@
                 android:src="@drawable/ic_settings" />
 
             <LinearLayout
+                android:id="@+id/firstRunWizardPanel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/card_background"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/firstRunWizardStepText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:letterSpacing="0.12"
+                    android:textColor="@color/fleet_warning"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/firstRunWizardTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:textColor="@color/fleet_text"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/firstRunWizardDescription"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textColor="@color/fleet_muted"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/firstRunWizardList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:background="@drawable/input_background"
+                    android:lineSpacingExtra="4dp"
+                    android:padding="16dp"
+                    android:textColor="@color/fleet_text"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/firstRunWizardStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:textColor="#FFAAA1"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
+                <Button
+                    android:id="@+id/firstRunWizardNextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="18dp"
+                    android:background="@drawable/button_primary"
+                    android:text="@string/first_run_next"
+                    android:textAllCaps="false"
+                    android:textColor="@color/fleet_primary_dark"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/loginPanel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -347,6 +414,124 @@
                         android:text="@string/wakeup_overlay_description"
                         android:textColor="@color/fleet_muted"
                         android:textSize="12sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="22dp"
+                        android:letterSpacing="0.12"
+                        android:text="@string/profile_permissions_title"
+                        android:textColor="@color/fleet_warning"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/input_background"
+                        android:orientation="vertical"
+                        android:padding="14dp">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/profile_background_service_title"
+                            android:textColor="@color/fleet_text"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/backgroundServiceStatusText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:textColor="@color/fleet_muted"
+                            android:textSize="12sp" />
+
+                        <Button
+                            android:id="@+id/backgroundServiceButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="46dp"
+                            android:layout_marginTop="10dp"
+                            android:background="@drawable/button_primary"
+                            android:text="@string/profile_enable_background_service"
+                            android:textAllCaps="false"
+                            android:textColor="@color/fleet_primary_dark"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/input_background"
+                        android:orientation="vertical"
+                        android:padding="14dp">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/profile_overlay_title"
+                            android:textColor="@color/fleet_text"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/overlayPermissionStatusText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:textColor="@color/fleet_muted"
+                            android:textSize="12sp" />
+
+                        <Button
+                            android:id="@+id/overlayPermissionButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="46dp"
+                            android:layout_marginTop="10dp"
+                            android:background="@drawable/button_primary"
+                            android:text="@string/profile_enable_overlay"
+                            android:textAllCaps="false"
+                            android:textColor="@color/fleet_primary_dark"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/input_background"
+                        android:orientation="vertical"
+                        android:padding="14dp">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/profile_background_location_title"
+                            android:textColor="@color/fleet_text"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/backgroundLocationStatusText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:textColor="@color/fleet_muted"
+                            android:textSize="12sp" />
+
+                        <Button
+                            android:id="@+id/backgroundLocationButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="46dp"
+                            android:layout_marginTop="10dp"
+                            android:background="@drawable/button_primary"
+                            android:text="@string/profile_enable_background_location"
+                            android:textAllCaps="false"
+                            android:textColor="@color/fleet_primary_dark"
+                            android:textStyle="bold" />
+                    </LinearLayout>
 
                     <Button
                         android:id="@+id/changePasswordButton"

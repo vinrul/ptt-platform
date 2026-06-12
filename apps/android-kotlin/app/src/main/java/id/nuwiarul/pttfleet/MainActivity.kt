@@ -78,6 +78,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private lateinit var serverSettingsStore: ServerSettingsStore
     private lateinit var wakeNavigationStore: PttWakeNavigationStore
     private lateinit var wakeupOverlayPreferenceStore: WakeupOverlayPreferenceStore
+    private lateinit var firstRunWizardStore: FirstRunWizardStore
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
@@ -105,6 +106,12 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private var updatingGroupSelection = false
     private var updatingWakeupOverlaySwitch = false
     private var pendingWakeNavigation: PttWakeNavigation? = null
+    private var firstRunWizardStep = FirstRunWizardStep.BASIC_PERMISSIONS
+    private var firstRunSettingsIndex = 0
+    private var firstRunBasicPermissionRequested = false
+    private var firstRunBasicPermissionBlocked = false
+    private var returningFromFirstRunBasicSettings = false
+    private var firstRunPendingSetting: FirstRunSetting? = null
     private val selectedTabState: MutableState<SessionTab> = mutableStateOf(SessionTab.HOME)
     private val loadingGroupMemberIds = mutableSetOf<String>()
     private val mapLocations = mutableMapOf<String, GroupLocation>()
@@ -129,7 +136,9 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
     private val backgroundLocationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) {}
+    ) {
+        syncProfileAccessControls()
+    }
     private val startupPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { permissions ->
@@ -156,6 +165,39 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         requestBackgroundLocationPermission()
         requestSystemAlertWindowPermission()
     }
+    private val firstRunPermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { permissions ->
+        handleFirstRunBasicPermissionResult(permissions)
+    }
+    private val firstRunSettingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        if (returningFromFirstRunBasicSettings) {
+            returningFromFirstRunBasicSettings = false
+            if (hasFirstRunBasicPermissions()) {
+                showFirstRunWizardStep(FirstRunWizardStep.BACKGROUND_ACCESS)
+            } else {
+                firstRunBasicPermissionBlocked = isAnyFirstRunBasicPermissionPermanentlyDenied()
+                binding.firstRunWizardStatus.setText(R.string.first_run_required_permissions_missing)
+                binding.firstRunWizardStatus.visibility = View.VISIBLE
+                binding.firstRunWizardNextButton.setText(
+                    if (firstRunBasicPermissionBlocked) {
+                        R.string.first_run_open_settings
+                    } else {
+                        R.string.first_run_next
+                    },
+                )
+            }
+            return@registerForActivityResult
+        }
+        handleFirstRunSettingsReturn()
+    }
+    private val firstRunBackgroundLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        finishFirstRunWizard()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -181,6 +223,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         serverSettingsStore = ServerSettingsStore(applicationContext)
         wakeNavigationStore = PttWakeNavigationStore(applicationContext)
         wakeupOverlayPreferenceStore = WakeupOverlayPreferenceStore(applicationContext)
+        firstRunWizardStore = FirstRunWizardStore(applicationContext)
         pendingWakeNavigation = wakeNavigationStore.consume()
         audioEngine = PttAudioEngine(
             onEncodedFrame = { payload ->
@@ -198,6 +241,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         groupMapController = GroupMapController(binding.groupMapView, ::showMapUserDetail)
         groupMapController.onCreate(savedInstanceState)
         binding.loginButton.setOnClickListener { login() }
+        binding.firstRunWizardNextButton.setOnClickListener { handleFirstRunWizardNext() }
         binding.showPasswordCheck.setOnCheckedChangeListener { _, checked ->
             setPasswordVisible(binding.passwordInput, checked)
         }
@@ -212,7 +256,11 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             if (checked) {
                 requestSystemAlertWindowPermission()
             }
+            syncProfileAccessControls()
         }
+        binding.backgroundServiceButton.setOnClickListener { enableBackgroundServiceFromProfile() }
+        binding.overlayPermissionButton.setOnClickListener { openOverlaySettingsFromProfile() }
+        binding.backgroundLocationButton.setOnClickListener { openBackgroundLocationSettingsFromProfile() }
         binding.mapTalkButton.setOnClickListener { talkToSelectedMapUser() }
         binding.mapDetailCloseButton.setOnClickListener { hideMapUserDetail() }
         binding.locationTrackingSwitch.setOnCheckedChangeListener { _, checked ->
@@ -233,7 +281,13 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         configurePttButton(binding.pttButton) { null }
         configurePttButton(binding.targetPttButton) { targetUserId }
 
-        sessionManager.currentSession()?.let { showSession(it) } ?: showLogin()
+        sessionManager.currentSession()?.let { showSession(it) } ?: run {
+            if (firstRunWizardStore.isComplete()) {
+                showLogin()
+            } else {
+                showFirstRunWizardStep(FirstRunWizardStep.BASIC_PERMISSIONS)
+            }
+        }
     }
 
     private fun applySystemBarInsets() {
@@ -288,6 +342,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             binding.locationStatusText.setText(R.string.location_stopped)
         }
         syncWakeupOverlaySwitch()
+        syncProfileAccessControls()
 
         PatrolService.onLocationChangedListener = { sample ->
             runOnUiThread {
@@ -352,6 +407,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     }
 
     private fun showSession(session: AuthSession) {
+        binding.firstRunWizardPanel.visibility = View.GONE
         binding.settingsButton.visibility = View.GONE
         binding.loginTitle.visibility = View.GONE
         binding.loginSubtitle.visibility = View.GONE
@@ -365,13 +421,14 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             session.user.role.replace('_', ' '),
         )
         syncWakeupOverlaySwitch()
+        syncProfileAccessControls()
         binding.connectionDetailText.setText(R.string.realtime_opening)
         showTab(
             if (pendingWakeNavigation?.isDirect == true) SessionTab.TARGET else SessionTab.HOME,
         )
 
         val isWakeup = intent?.getBooleanExtra("is_wakeup", false) == true
-        if (!isWakeup) {
+        if (!isWakeup && !firstRunWizardStore.isComplete()) {
             requestStartupPermissions()
         }
 
@@ -392,6 +449,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
     private fun showLogin() {
         binding.contentScroll.visibility = View.VISIBLE
         binding.mapPanel.visibility = View.GONE
+        binding.firstRunWizardPanel.visibility = View.GONE
         binding.settingsButton.visibility = View.VISIBLE
         binding.loginTitle.visibility = View.VISIBLE
         binding.loginSubtitle.visibility = View.VISIBLE
@@ -407,6 +465,254 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         renderGroupMembers(emptyList())
         binding.pttButton.isEnabled = false
         binding.targetPttButton.isEnabled = false
+    }
+
+    private fun showFirstRunWizardStep(step: FirstRunWizardStep) {
+        firstRunWizardStep = step
+        binding.contentScroll.visibility = View.VISIBLE
+        binding.mapPanel.visibility = View.GONE
+        binding.bottomNavigation.visibility = View.GONE
+        binding.settingsButton.visibility = View.GONE
+        binding.loginTitle.visibility = View.GONE
+        binding.loginSubtitle.visibility = View.GONE
+        binding.loginPanel.visibility = View.GONE
+        binding.sessionPanel.visibility = View.GONE
+        binding.loginError.visibility = View.GONE
+        binding.firstRunWizardPanel.visibility = View.VISIBLE
+
+        when (step) {
+            FirstRunWizardStep.BASIC_PERMISSIONS -> {
+                binding.firstRunWizardStepText.setText(R.string.first_run_step_1)
+                binding.firstRunWizardTitle.setText(R.string.first_run_basic_title)
+                binding.firstRunWizardDescription.setText(R.string.first_run_basic_description)
+                binding.firstRunWizardList.setText(R.string.first_run_basic_list)
+                binding.firstRunWizardNextButton.setText(R.string.first_run_next)
+                binding.firstRunWizardStatus.visibility = View.GONE
+            }
+            FirstRunWizardStep.BACKGROUND_ACCESS -> {
+                binding.firstRunWizardStepText.setText(R.string.first_run_step_2)
+                binding.firstRunWizardTitle.setText(R.string.first_run_background_title)
+                binding.firstRunWizardDescription.setText(R.string.first_run_background_description)
+                binding.firstRunWizardList.setText(R.string.first_run_background_list)
+                renderFirstRunBackgroundAccessState()
+            }
+        }
+    }
+
+    private fun handleFirstRunWizardNext() {
+        when (firstRunWizardStep) {
+            FirstRunWizardStep.BASIC_PERMISSIONS -> requestFirstRunBasicPermissions()
+            FirstRunWizardStep.BACKGROUND_ACCESS -> handleFirstRunBackgroundAccessNext()
+        }
+    }
+
+    private fun requestFirstRunBasicPermissions() {
+        if (hasFirstRunBasicPermissions()) {
+            showFirstRunWizardStep(FirstRunWizardStep.BACKGROUND_ACCESS)
+            return
+        }
+        if (firstRunBasicPermissionBlocked) {
+            openAppSettingsForFirstRunPermissions()
+            return
+        }
+        val permissions = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.RECORD_AUDIO,
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        firstRunBasicPermissionRequested = true
+        firstRunPermissionsLauncher.launch(permissions.toTypedArray())
+    }
+
+    private fun handleFirstRunBasicPermissionResult(permissions: Map<String, Boolean>) {
+        if (hasFirstRunBasicPermissions(permissions)) {
+            firstRunBasicPermissionBlocked = false
+            binding.firstRunWizardStatus.visibility = View.GONE
+            showFirstRunWizardStep(FirstRunWizardStep.BACKGROUND_ACCESS)
+            return
+        }
+
+        firstRunBasicPermissionBlocked = isAnyFirstRunBasicPermissionPermanentlyDenied()
+        binding.firstRunWizardStatus.setText(R.string.first_run_required_permissions_missing)
+        binding.firstRunWizardStatus.visibility = View.VISIBLE
+        binding.firstRunWizardNextButton.setText(
+            if (firstRunBasicPermissionBlocked) {
+                R.string.first_run_open_settings
+            } else {
+                R.string.first_run_next
+            },
+        )
+    }
+
+    private fun hasFirstRunBasicPermissions(
+        permissionResult: Map<String, Boolean>? = null,
+    ): Boolean {
+        val hasLocation = permissionResult?.let {
+            it[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                it[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        } ?: (
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
+            )
+        val hasAudio = permissionResult?.get(Manifest.permission.RECORD_AUDIO)
+            ?: (
+                ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED
+                )
+        val hasNotification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissionResult?.get(Manifest.permission.POST_NOTIFICATIONS)
+                ?: (
+                    ContextCompat.checkSelfPermission(
+                        this,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) == PackageManager.PERMISSION_GRANTED
+                    )
+        } else {
+            true
+        }
+        return hasLocation && hasAudio && hasNotification
+    }
+
+    private fun isAnyFirstRunBasicPermissionPermanentlyDenied(): Boolean {
+        if (!firstRunBasicPermissionRequested) return false
+        val locationDenied =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) !=
+                PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) !=
+                PackageManager.PERMISSION_GRANTED &&
+                !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION) &&
+                !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_COARSE_LOCATION)
+        val audioDenied =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED &&
+                !shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
+        val notificationDenied = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED &&
+            !shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)
+        return locationDenied || audioDenied || notificationDenied
+    }
+
+    private fun openAppSettingsForFirstRunPermissions() {
+        runCatching {
+            returningFromFirstRunBasicSettings = true
+            firstRunSettingsLauncher.launch(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }.onFailure {
+            binding.firstRunWizardStatus.setText(R.string.first_run_required_permissions_missing)
+            binding.firstRunWizardStatus.visibility = View.VISIBLE
+        }
+    }
+
+    private fun handleFirstRunBackgroundAccessNext() {
+        when (firstRunSettingsIndex) {
+            0 -> {
+                PatrolService.start(applicationContext)
+                firstRunSettingsIndex = 1
+                syncProfileAccessControls()
+                renderFirstRunBackgroundAccessState(R.string.first_run_background_service_enabled)
+            }
+            1 -> {
+                wakeupOverlayPreferenceStore.setEnabled(true)
+                syncWakeupOverlaySwitch()
+                if (launchOverlaySetting()) return
+                firstRunSettingsIndex = 2
+                renderFirstRunBackgroundAccessState(R.string.first_run_overlay_reviewed)
+            }
+            2 -> {
+                if (launchBackgroundLocationSetting()) return
+                firstRunSettingsIndex = 3
+                renderFirstRunBackgroundAccessState(R.string.first_run_background_location_reviewed)
+            }
+            else -> finishFirstRunWizard()
+        }
+    }
+
+    private fun handleFirstRunSettingsReturn() {
+        when (firstRunPendingSetting) {
+            FirstRunSetting.OVERLAY -> {
+                firstRunPendingSetting = null
+                firstRunSettingsIndex = 2
+                renderFirstRunBackgroundAccessState(R.string.first_run_overlay_reviewed)
+            }
+            FirstRunSetting.BACKGROUND_LOCATION -> {
+                firstRunPendingSetting = null
+                firstRunSettingsIndex = 3
+                renderFirstRunBackgroundAccessState(R.string.first_run_background_location_reviewed)
+            }
+            null -> Unit
+        }
+    }
+
+    private fun renderFirstRunBackgroundAccessState(statusRes: Int? = null) {
+        binding.firstRunWizardNextButton.setText(
+            when (firstRunSettingsIndex) {
+                0 -> R.string.first_run_enable_background_service
+                1 -> R.string.first_run_enable_overlay
+                2 -> R.string.first_run_enable_all_time_location
+                else -> R.string.first_run_finish
+            },
+        )
+        if (statusRes == null) {
+            binding.firstRunWizardStatus.visibility = View.GONE
+        } else {
+            binding.firstRunWizardStatus.setText(statusRes)
+            binding.firstRunWizardStatus.visibility = View.VISIBLE
+        }
+    }
+
+    private fun launchOverlaySetting(): Boolean {
+        if (Settings.canDrawOverlays(this)) return false
+        return runCatching {
+            firstRunPendingSetting = FirstRunSetting.OVERLAY
+            firstRunSettingsLauncher.launch(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }.isSuccess
+    }
+
+    private fun launchBackgroundLocationSetting(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        if (
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            return false
+        }
+        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+            firstRunBackgroundLocationLauncher.launch(
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+            )
+            return true
+        }
+        return runCatching {
+            firstRunPendingSetting = FirstRunSetting.BACKGROUND_LOCATION
+            firstRunSettingsLauncher.launch(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }.isSuccess
+    }
+
+    private fun finishFirstRunWizard() {
+        firstRunWizardStore.markComplete()
+        showLogin()
     }
 
     private fun logout() {
@@ -879,6 +1185,82 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         updatingWakeupOverlaySwitch = false
     }
 
+    private fun syncProfileAccessControls() {
+        val backgroundServiceEnabled = PatrolService.isEnabled(applicationContext)
+        binding.backgroundServiceStatusText.setText(
+            if (backgroundServiceEnabled) {
+                R.string.profile_background_service_enabled
+            } else {
+                R.string.profile_background_service_disabled
+            },
+        )
+        binding.backgroundServiceButton.isEnabled = !backgroundServiceEnabled
+
+        val overlayEnabled = Settings.canDrawOverlays(this)
+        binding.overlayPermissionStatusText.setText(
+            if (overlayEnabled) R.string.profile_overlay_enabled else R.string.profile_overlay_disabled,
+        )
+        binding.overlayPermissionButton.isEnabled = !overlayEnabled
+
+        val backgroundLocationEnabled = hasBackgroundLocationPermission()
+        binding.backgroundLocationStatusText.setText(
+            if (backgroundLocationEnabled) {
+                R.string.profile_background_location_enabled
+            } else {
+                R.string.profile_background_location_disabled
+            },
+        )
+        binding.backgroundLocationButton.isEnabled = !backgroundLocationEnabled
+    }
+
+    private fun enableBackgroundServiceFromProfile() {
+        PatrolService.start(applicationContext)
+        syncProfileAccessControls()
+    }
+
+    private fun openOverlaySettingsFromProfile() {
+        if (Settings.canDrawOverlays(this)) {
+            syncProfileAccessControls()
+            return
+        }
+        runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }
+    }
+
+    private fun openBackgroundLocationSettingsFromProfile() {
+        if (hasBackgroundLocationPermission()) {
+            syncProfileAccessControls()
+            return
+        }
+        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+            backgroundLocationPermissionLauncher.launch(
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+            )
+            return
+        }
+        runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }
+    }
+
+    private fun hasBackgroundLocationPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+            ) == PackageManager.PERMISSION_GRANTED
+
     private fun handleLocation(sample: GpsSample) {
         latestLocation = sample
         binding.locationStatusText.text = getString(
@@ -1151,6 +1533,16 @@ private enum class SessionTab {
     TARGET,
     MAP,
     PROFILE,
+}
+
+private enum class FirstRunWizardStep {
+    BASIC_PERMISSIONS,
+    BACKGROUND_ACCESS,
+}
+
+private enum class FirstRunSetting {
+    OVERLAY,
+    BACKGROUND_LOCATION,
 }
 
 private data class BottomNavItem(
