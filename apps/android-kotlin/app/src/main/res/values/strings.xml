@@ -73,6 +73,7 @@
     <string name="location_permission_denied">Location permission was denied.</string>
     <string name="location_sent">GPS sent · %1$.5f, %2$.5f</string>
     <string name="location_not_sent">GPS queued while offline · %1$.5f, %2$.5f</string>
+    <string name="position_request_permission_required">Location permission is required to send current position.</string>
     <string name="send_sos">Send SOS</string>
     <string name="sos_ready">Emergency alert is ready.</string>
     <string name="sos_confirm_title">Send emergency alert?</string>
@@ -100,6 +101,8 @@
     <string name="map_load_failed">Unable to load group locations.</string>
     <string name="map_user_detail">%1$s (@%2$s)</string>
     <string name="map_location_detail">Updated %1$s · accuracy %2$s</string>
+    <string name="map_address_loading">Resolving address...</string>
+    <string name="map_address_failed">Address is unavailable.</string>
     <string name="map_accuracy_unknown">unknown</string>
     <string name="map_accuracy_meters">%1$.0f m</string>
     <string name="talk_to_map_user">Talk to this user</string>

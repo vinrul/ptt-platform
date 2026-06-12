@@ -12,15 +12,28 @@ const AdminPage = lazy(async () => {
   return { default: module.AdminPage };
 });
 
+const HistoryPage = lazy(async () => {
+  const module = await import("./HistoryPage");
+  return { default: module.HistoryPage };
+});
+
 export function App() {
   const session = useAuthStore((state) => state.session);
-  const [view, setView] = useState<"dispatcher" | "admin">("dispatcher");
+  const [view, setView] = useState<"dispatcher" | "admin" | "history">("dispatcher");
   return session ? (
     <Suspense fallback={<DashboardLoading />}>
       {view === "admin" ? (
         <AdminPage onBack={() => setView("dispatcher")} />
+      ) : view === "history" ? (
+        <HistoryPage
+          onBack={() => setView("dispatcher")}
+          onOpenAdmin={() => setView("admin")}
+        />
       ) : (
-        <DispatcherPage onOpenAdmin={() => setView("admin")} />
+        <DispatcherPage
+          onOpenAdmin={() => setView("admin")}
+          onOpenHistory={() => setView("history")}
+        />
       )}
     </Suspense>
   ) : (

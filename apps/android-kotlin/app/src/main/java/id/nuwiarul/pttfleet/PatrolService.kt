@@ -46,6 +46,8 @@ class PatrolService : Service(), RealtimeListener {
     private var wifiLock: WifiManager.WifiLock? = null
     private var locationTracker: LocationTracker? = null
     private var pendingWakeLocation = false
+    private var pendingPositionRequestId: String? = null
+    private var pendingPositionRequestGroupId: String? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var sessionManager: SessionManager
     private var connectionJob: Job? = null
@@ -113,6 +115,17 @@ class PatrolService : Service(), RealtimeListener {
                 wakeScreenBriefly()
             }
         }
+        if (intent?.action == ACTION_POSITION_REQUEST) {
+            pendingPositionRequestId = intent.getStringExtra(EXTRA_REQUEST_ID)
+            pendingPositionRequestGroupId = intent.getStringExtra(EXTRA_GROUP_ID)
+            intent.getStringExtra(EXTRA_GROUP_ID)?.takeIf { it.isNotBlank() }?.let { groupId ->
+                selectedGroupId = groupId
+                getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
+                    .edit()
+                    .putString(KEY_GROUP_ID, groupId)
+                    .apply()
+            }
+        }
         val shouldSendPttLocation = intent?.action == ACTION_PTT_LOCATION_SNAPSHOT
         if (intent?.action == ACTION_JOIN_GROUP) {
             selectedGroupId = intent.getStringExtra(EXTRA_GROUP_ID)
@@ -127,7 +140,9 @@ class PatrolService : Service(), RealtimeListener {
 
         startPatrolForeground(getString(R.string.background_connecting))
         setEnabled(this, true)
-        val forceConnect = intent?.action == ACTION_JOIN_GROUP || intent?.action == ACTION_WAKEUP
+        val forceConnect = intent?.action == ACTION_JOIN_GROUP ||
+            intent?.action == ACTION_WAKEUP ||
+            intent?.action == ACTION_POSITION_REQUEST
         ensureConnected(forceConnect)
         checkAndStartLocationTracking()
         if (shouldSendPttLocation) {
@@ -244,6 +259,7 @@ class PatrolService : Service(), RealtimeListener {
     override fun onReady(connectionId: String) {
         selectedGroupId?.let { realtimeClient.joinGroup(it) }
         sendWakeLocationIfPending()
+        sendPositionRequestIfPending()
     }
 
     override fun onError(message: String) = updateNotification(message)
@@ -257,6 +273,12 @@ class PatrolService : Service(), RealtimeListener {
     }
 
     override fun onPresenceUpdated(userId: String, status: String) = Unit
+
+    override fun onGpsRequested(requestId: String, groupId: String, requesterUserId: String) {
+        selectedGroupId = groupId
+        realtimeClient.joinGroup(groupId)
+        requestOnePosition(requestId, groupId, requireBackgroundPermission = false)
+    }
 
     override fun onPttGranted(sessionId: String, groupId: String) = Unit
 
@@ -326,6 +348,49 @@ class PatrolService : Service(), RealtimeListener {
                 realtimeClient.sendGps(sample)
                 onLocationChangedListener?.invoke(sample)
                 updateNotification(getString(R.string.background_location_sent))
+            },
+        )
+    }
+
+    private fun sendPositionRequestIfPending() {
+        val requestId = pendingPositionRequestId ?: return
+        val groupId = pendingPositionRequestGroupId ?: selectedGroupId
+        if (groupId.isNullOrBlank()) {
+            pendingPositionRequestId = null
+            pendingPositionRequestGroupId = null
+            return
+        }
+        pendingPositionRequestId = null
+        pendingPositionRequestGroupId = null
+        realtimeClient.joinGroup(groupId)
+        requestOnePosition(requestId, groupId, requireBackgroundPermission = true)
+    }
+
+    private fun requestOnePosition(
+        requestId: String,
+        groupId: String,
+        requireBackgroundPermission: Boolean,
+    ) {
+        if (!hasLocationPermission() || (requireBackgroundPermission && !hasBackgroundLocationPermission())) {
+            realtimeClient.sendGpsRequestFailed(
+                requestId,
+                groupId,
+                getString(R.string.position_request_permission_required),
+            )
+            updateNotification(getString(R.string.position_request_permission_required))
+            return
+        }
+
+        locationTracker?.requestCurrentLocation(
+            onResult = { sample ->
+                latestLocation = sample
+                realtimeClient.sendGps(sample, requestId)
+                onLocationChangedListener?.invoke(sample)
+                updateNotification(getString(R.string.background_location_sent))
+            },
+            onUnavailable = { message ->
+                realtimeClient.sendGpsRequestFailed(requestId, groupId, message)
+                updateNotification(message)
             },
         )
     }
@@ -431,7 +496,10 @@ class PatrolService : Service(), RealtimeListener {
         private const val ACTION_STOP_TRACKING = "id.nuwiarul.pttfleet.action.STOP_TRACKING"
         private const val ACTION_PTT_LOCATION_SNAPSHOT =
             "id.nuwiarul.pttfleet.action.PTT_LOCATION_SNAPSHOT"
+        private const val ACTION_POSITION_REQUEST =
+            "id.nuwiarul.pttfleet.action.POSITION_REQUEST"
         private const val EXTRA_GROUP_ID = "group_id"
+        private const val EXTRA_REQUEST_ID = "request_id"
         private const val PREFERENCES_NAME = "patrol_service"
         private const val KEY_GROUP_ID = "selected_group_id"
         private const val KEY_ENABLED = "enabled"
@@ -489,6 +557,17 @@ class PatrolService : Service(), RealtimeListener {
             context.startForegroundService(
                 Intent(context, PatrolService::class.java)
                     .setAction(ACTION_PTT_LOCATION_SNAPSHOT),
+            )
+        }
+
+        fun requestPosition(context: Context, groupId: String?, requestId: String?) {
+            context.startForegroundService(
+                Intent(context, PatrolService::class.java)
+                    .setAction(ACTION_POSITION_REQUEST)
+                    .apply {
+                        if (!groupId.isNullOrBlank()) putExtra(EXTRA_GROUP_ID, groupId)
+                        if (!requestId.isNullOrBlank()) putExtra(EXTRA_REQUEST_ID, requestId)
+                    },
             )
         }
 

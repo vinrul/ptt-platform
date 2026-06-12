@@ -164,6 +164,10 @@ func (h *Handler) readLoop(c *gin.Context, connection *Connection) {
 			h.handleGroupJoin(c, connection, event)
 		case "gps.update":
 			h.handleGPSUpdate(c, connection, event)
+		case "gps.request":
+			h.handleGPSRequest(c, connection, event)
+		case "gps.request.failed":
+			h.handleGPSRequestFailed(connection, event)
 		case "sos.create":
 			h.handleSOSCreate(c, connection, event)
 		case "sos.ack":
@@ -180,6 +184,121 @@ func (h *Handler) readLoop(c *gin.Context, connection *Connection) {
 			}))
 		}
 	}
+}
+
+func (h *Handler) handleGPSRequest(c *gin.Context, connection *Connection, event Event) {
+	if !isOperatorRole(connection.Role) {
+		connection.Send(NewErrorEvent(event.RequestID, "forbidden", "Only operators can request a position update", nil))
+		return
+	}
+
+	var payload struct {
+		GroupID      string `json:"groupId"`
+		TargetUserID string `json:"targetUserId"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil ||
+		payload.GroupID == "" ||
+		payload.TargetUserID == "" {
+		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "groupId and targetUserId are required", nil))
+		return
+	}
+	if payload.TargetUserID == connection.UserID {
+		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "targetUserId must be another user", nil))
+		return
+	}
+	if err := h.repository.CanJoinGroup(c.Request.Context(), payload.TargetUserID, payload.GroupID); errors.Is(err, ErrGroupNotAllowed) {
+		connection.Send(NewErrorEvent(event.RequestID, "forbidden", "Target user is not an active member of this group", nil))
+		return
+	} else if err != nil {
+		connection.Send(NewErrorEvent(event.RequestID, "server_error", "Unable to validate target group membership", nil))
+		return
+	}
+
+	requestID := event.RequestID
+	if requestID == "" {
+		requestID = fmt.Sprintf("gps-%d", time.Now().UnixMilli())
+	}
+	requested := NewEvent("gps.requested", requestID, map[string]any{
+		"groupId":         payload.GroupID,
+		"targetUserId":    payload.TargetUserID,
+		"requesterUserId": connection.UserID,
+	})
+	if h.hub.SendToUser(payload.TargetUserID, requested) > 0 {
+		connection.Send(NewEvent("gps.request.accepted", requestID, map[string]any{
+			"groupId":      payload.GroupID,
+			"targetUserId": payload.TargetUserID,
+			"delivery":     "websocket",
+		}))
+		return
+	}
+	if h.firebase == nil {
+		connection.Send(NewEvent("gps.request.failed", requestID, map[string]any{
+			"groupId":      payload.GroupID,
+			"targetUserId": payload.TargetUserID,
+			"message":      "Target is offline and FCM is not configured.",
+		}))
+		return
+	}
+
+	targets, err := h.repository.GetUserPushTokens(c.Request.Context(), payload.TargetUserID)
+	if err != nil {
+		connection.Send(NewErrorEvent(event.RequestID, "server_error", "Unable to load target device token", nil))
+		return
+	}
+	if len(targets) == 0 {
+		connection.Send(NewEvent("gps.request.failed", requestID, map[string]any{
+			"groupId":      payload.GroupID,
+			"targetUserId": payload.TargetUserID,
+			"message":      "Target is offline and has no active push token.",
+		}))
+		return
+	}
+
+	go h.sendFcmLocationRequest(payload.GroupID, payload.TargetUserID, connection.UserID, requestID, targets)
+	connection.Send(NewEvent("gps.request.accepted", requestID, map[string]any{
+		"groupId":      payload.GroupID,
+		"targetUserId": payload.TargetUserID,
+		"delivery":     "fcm",
+	}))
+}
+
+func (h *Handler) sendFcmLocationRequest(groupID string, targetUserID string, requesterUserID string, requestID string, targets []PushTarget) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for _, target := range targets {
+		if target.UserID != targetUserID {
+			continue
+		}
+		if err := h.firebase.SendLocationRequest(ctx, target.PushToken, firebase.LocationRequest{
+			GroupID:         groupID,
+			RequestID:       requestID,
+			RequesterUserID: requesterUserID,
+		}); err != nil {
+			h.hub.BroadcastToOperators(NewEvent("gps.request.failed", requestID, map[string]any{
+				"groupId":      groupID,
+				"targetUserId": targetUserID,
+				"message":      "Unable to send FCM position request.",
+			}))
+			return
+		}
+	}
+}
+
+func (h *Handler) handleGPSRequestFailed(connection *Connection, event Event) {
+	var payload struct {
+		GroupID string `json:"groupId"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil || payload.GroupID == "" {
+		connection.Send(NewErrorEvent(event.RequestID, "validation_error", "groupId is required", nil))
+		return
+	}
+	h.hub.BroadcastToOperators(NewEvent("gps.request.failed", event.RequestID, map[string]any{
+		"groupId":      payload.GroupID,
+		"targetUserId": connection.UserID,
+		"message":      emptyToDefault(payload.Message, "Target device could not obtain current location."),
+	}))
 }
 
 func (h *Handler) handlePTTStart(c *gin.Context, connection *Connection, event Event) {
@@ -501,6 +620,13 @@ func emptyIntToNil(value int) any {
 func emptyToNil(value string) any {
 	if value == "" {
 		return nil
+	}
+	return value
+}
+
+func emptyToDefault(value string, fallback string) string {
+	if value == "" {
+		return fallback
 	}
 	return value
 }

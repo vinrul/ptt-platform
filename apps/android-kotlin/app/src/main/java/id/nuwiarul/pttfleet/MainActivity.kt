@@ -1,6 +1,7 @@
 package id.nuwiarul.pttfleet
 
 import android.Manifest
+import android.content.res.ColorStateList
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -30,6 +31,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +61,7 @@ import id.nuwiarul.pttfleet.fcm.WakeupOverlayPreferenceStore
 import id.nuwiarul.pttfleet.location.GpsSample
 import id.nuwiarul.pttfleet.location.LocationTracker
 import id.nuwiarul.pttfleet.map.GroupMapController
+import id.nuwiarul.pttfleet.map.ReverseGeocodeRepository
 import id.nuwiarul.pttfleet.websocket.ConnectionStatus
 import id.nuwiarul.pttfleet.websocket.RealtimeClient
 import id.nuwiarul.pttfleet.websocket.RealtimeListener
@@ -88,6 +91,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         .build()
     private val authRepository = AuthRepository(httpClient)
     private val groupRepository = GroupRepository(httpClient)
+    private val reverseGeocodeRepository = ReverseGeocodeRepository(httpClient)
     private val realtimeClient = RealtimeClient.getInstance()
     private lateinit var audioEngine: PttAudioEngine
     private lateinit var groupMapController: GroupMapController
@@ -957,12 +961,31 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
             location.recordedAt,
             accuracy,
         )
+        binding.mapUserAddressText.setText(R.string.map_address_loading)
         binding.mapTalkButton.isEnabled = groupMembers.any { it.userId == location.userId }
+        loadMapUserAddress(location)
     }
 
     private fun hideMapUserDetail() {
         selectedMapLocation = null
         binding.mapUserDetailPanel.visibility = View.GONE
+    }
+
+    private fun loadMapUserAddress(location: GroupLocation) {
+        lifecycleScope.launch {
+            runCatching {
+                val session = sessionManager.validSession() ?: throw IllegalStateException("Session unavailable")
+                reverseGeocodeRepository.reverse(session, location.lat, location.lng)
+            }.onSuccess { address ->
+                if (selectedMapLocation?.userId == location.userId) {
+                    binding.mapUserAddressText.text = address
+                }
+            }.onFailure {
+                if (selectedMapLocation?.userId == location.userId) {
+                    binding.mapUserAddressText.setText(R.string.map_address_failed)
+                }
+            }
+        }
     }
 
     private fun talkToSelectedMapUser() {
@@ -1019,6 +1042,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                     )
                     tag = member.userId
                     isChecked = targetUserId == member.userId
+                    buttonTintList = controlButtonTint()
                 },
             )
         }
@@ -1029,6 +1053,19 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         }
         updateTargetButton()
     }
+
+    private fun controlButtonTint(): ColorStateList = ColorStateList(
+        arrayOf(
+            intArrayOf(android.R.attr.state_checked),
+            intArrayOf(-android.R.attr.state_enabled),
+            intArrayOf(),
+        ),
+        intArrayOf(
+            ContextCompat.getColor(this, R.color.fleet_primary),
+            ContextCompat.getColor(this, R.color.fleet_control_disabled),
+            ContextCompat.getColor(this, R.color.fleet_control_off),
+        ),
+    )
 
     private fun selectedTargetName(): String? =
         targetUserId?.let { selectedId ->
@@ -1553,7 +1590,7 @@ private data class BottomNavItem(
 
 @Composable
 private fun PttFleetTheme(content: @Composable () -> Unit) {
-    val colors = darkColorScheme(
+    val darkColors = darkColorScheme(
         primary = Color(0xFF34D399),
         onPrimary = Color(0xFF06251A),
         secondary = Color(0xFFF59E0B),
@@ -1563,8 +1600,18 @@ private fun PttFleetTheme(content: @Composable () -> Unit) {
         onSurface = Color(0xFFEAFBF4),
         onSurfaceVariant = Color(0xFF8EA99C),
     )
+    val lightColors = lightColorScheme(
+        primary = Color(0xFF047857),
+        onPrimary = Color(0xFFFFFFFF),
+        secondary = Color(0xFF9A5B00),
+        background = Color(0xFFF5F8F5),
+        surface = Color(0xFFFFFFFF),
+        surfaceContainer = Color(0xFFEDF3EF),
+        onSurface = Color(0xFF10201A),
+        onSurfaceVariant = Color(0xFF5F6F68),
+    )
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) colors else colors,
+        colorScheme = if (isSystemInDarkTheme()) darkColors else lightColors,
         content = content,
     )
 }

@@ -370,6 +370,12 @@ Mengembalikan satu posisi GPS terakhir yang tersimpan untuk setiap anggota grup
 aktif yang sudah memiliki data lokasi. `field_user` hanya boleh membaca grup
 tempat user tersebut menjadi anggota.
 
+Query parameter opsional:
+
+- `hours`: batasi posisi terakhir ke data yang terekam dalam N jam terakhir.
+  Nilai maksimum `168`. Jika tidak dikirim, endpoint memakai perilaku lama dan
+  mengembalikan posisi terakhir yang pernah tersimpan.
+
 ```json
 {
   "items": [
@@ -418,6 +424,53 @@ Request:
 ### DELETE /api/groups/:id/members/:userId
 
 Removes member from group.
+
+## Geocode and Routes
+
+### GET /api/geocode/reverse
+
+Proxy reverse geocode untuk web dispatcher dan Android. Endpoint upstream
+diatur dari env `REVERSE_GEOCODE_URL`.
+
+Query:
+
+- `lat`
+- `lng`
+
+Response:
+
+```json
+{
+  "displayName": "Jalan ..., Kota ..."
+}
+```
+
+### POST /api/routes/line
+
+Proxy route line OSRM untuk halaman history dispatcher. Endpoint upstream
+diatur dari env `ROUTE_SERVICE_URL`.
+
+Request:
+
+```json
+{
+  "points": [
+    { "lat": -6.2, "lng": 106.8 },
+    { "lat": -6.21, "lng": 106.81 }
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "coordinates": [
+    [106.8, -6.2],
+    [106.81, -6.21]
+  ]
+}
+```
 
 ## Common Status Codes
 

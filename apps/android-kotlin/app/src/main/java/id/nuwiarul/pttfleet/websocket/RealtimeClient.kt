@@ -43,6 +43,7 @@ interface RealtimeListener {
         accuracy: Double?,
         recordedAt: String,
     ) = Unit
+    fun onGpsRequested(requestId: String, groupId: String, requesterUserId: String) = Unit
     fun onPttGranted(sessionId: String, groupId: String)
     fun onPttBusy(groupId: String, speakerUserId: String, queuePosition: Int?)
     fun onPttStarted(sessionId: String, groupId: String, speakerUserId: String)
@@ -136,7 +137,7 @@ class RealtimeClient private constructor() {
     }
 
     @Synchronized
-    fun sendGps(sample: GpsSample): Boolean {
+    fun sendGps(sample: GpsSample, requestId: String? = null): Boolean {
         val payload = JSONObject()
             .put("lat", sample.lat)
             .put("lng", sample.lng)
@@ -148,8 +149,19 @@ class RealtimeClient private constructor() {
             .put("type", "gps.update")
             .put("timestamp", Instant.now().toString())
             .put("payload", payload)
+        requestId?.let { event.put("requestId", it) }
         return socket?.send(event.toString()) == true
     }
+
+    @Synchronized
+    fun sendGpsRequestFailed(requestId: String, groupId: String, message: String): Boolean =
+        sendJson(
+            "gps.request.failed",
+            JSONObject()
+                .put("groupId", groupId)
+                .put("message", message),
+            requestId,
+        )
 
     @Synchronized
     fun sendSos(sample: GpsSample?, message: String = "Emergency"): Boolean {
@@ -199,10 +211,10 @@ class RealtimeClient private constructor() {
         return socket?.send(ByteString.of(*AudioEnvelope.encodeUplink(sessionId, sequence, opusPayload))) == true
     }
 
-    private fun sendJson(type: String, payload: JSONObject): Boolean {
+    private fun sendJson(type: String, payload: JSONObject, requestId: String? = null): Boolean {
         val event = JSONObject()
             .put("type", type)
-            .put("requestId", "android-${System.currentTimeMillis()}")
+            .put("requestId", requestId ?: "android-${System.currentTimeMillis()}")
             .put("timestamp", Instant.now().toString())
             .put("payload", payload)
         return socket?.send(event.toString()) == true
@@ -304,6 +316,20 @@ class RealtimeClient private constructor() {
                                     recordedAt = payload.getString("recordedAt"),
                                 )
                             }
+                        }
+                    }
+                }
+                "gps.requested" -> {
+                    val requestId = event.optString("requestId").takeIf { it.isNotBlank() }
+                        ?: "android-gps-${System.currentTimeMillis()}"
+                    val payload = event.getJSONObject("payload")
+                    mainHandler.post {
+                        listeners.forEach {
+                            it.onGpsRequested(
+                                requestId = requestId,
+                                groupId = payload.getString("groupId"),
+                                requesterUserId = payload.optString("requesterUserId"),
+                            )
                         }
                     }
                 }

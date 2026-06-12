@@ -47,6 +47,12 @@ type PttWakeup struct {
 	SpeakerUsername string
 }
 
+type LocationRequest struct {
+	GroupID         string
+	RequestID       string
+	RequesterUserID string
+}
+
 func (c *Client) SendPttWakeup(ctx context.Context, token string, wakeup PttWakeup) error {
 	if c == nil || c.fcm == nil {
 		return nil
@@ -73,4 +79,26 @@ func pttWakeupData(wakeup PttWakeup) map[string]string {
 		"speakerUserId":   wakeup.SpeakerUserID,
 		"speakerUsername": wakeup.SpeakerUsername,
 	}
+}
+
+func (c *Client) SendLocationRequest(ctx context.Context, token string, request LocationRequest) error {
+	if c == nil || c.fcm == nil {
+		return nil
+	}
+
+	message := &messaging.Message{
+		Token: token,
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+		},
+		Data: map[string]string{
+			"type":            "gps_location_request",
+			"groupId":         request.GroupID,
+			"requestId":       request.RequestID,
+			"requesterUserId": request.RequesterUserID,
+		},
+	}
+
+	_, err := c.fcm.Send(ctx, message)
+	return err
 }

@@ -45,6 +45,14 @@ export type GpsUpdateEvent = RealtimeEvent<
   }
 >;
 
+export type GpsRequestEvent = RealtimeEvent<
+  "gps.request",
+  {
+    groupId: string;
+    targetUserId: string;
+  }
+>;
+
 export type GpsUpdatedEvent = RealtimeEvent<
   "gps.updated",
   {
@@ -124,6 +132,33 @@ export type PttStartEvent = RealtimeEvent<
   { groupId: string; targetUserId?: string; queue?: boolean }
 >;
 
+export type GpsRequestAcceptedEvent = RealtimeEvent<
+  "gps.request.accepted",
+  {
+    groupId: string;
+    targetUserId: string;
+    delivery: "websocket" | "fcm";
+  }
+>;
+
+export type GpsRequestedEvent = RealtimeEvent<
+  "gps.requested",
+  {
+    groupId: string;
+    targetUserId: string;
+    requesterUserId: string;
+  }
+>;
+
+export type GpsRequestFailedEvent = RealtimeEvent<
+  "gps.request.failed",
+  {
+    groupId: string;
+    targetUserId: string;
+    message: string;
+  }
+>;
+
 export type PttStopEvent = RealtimeEvent<"ptt.stop", { sessionId: string }>;
 export type PttCancelEvent = RealtimeEvent<"ptt.cancel", { groupId: string }>;
 
@@ -140,6 +175,8 @@ export type ClientRealtimeEvent =
   | HeartbeatEvent
   | GroupJoinEvent
   | GpsUpdateEvent
+  | GpsRequestEvent
+  | GpsRequestFailedEvent
   | SosCreateEvent
   | SosAckEvent
   | PttStartEvent
@@ -150,6 +187,9 @@ export type ServerRealtimeEvent =
   | PresenceUpdatedEvent
   | GroupJoinedEvent
   | GpsUpdatedEvent
+  | GpsRequestAcceptedEvent
+  | GpsRequestedEvent
+  | GpsRequestFailedEvent
   | SosCreatedEvent
   | SosAckedEvent
   | PttStateEvent

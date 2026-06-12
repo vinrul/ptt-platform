@@ -180,7 +180,11 @@ func (s *Service) History(
 	return result, nil
 }
 
-func (s *Service) LatestForGroup(ctx context.Context, groupID string) ([]GroupLocation, error) {
+func (s *Service) LatestForGroup(
+	ctx context.Context,
+	groupID string,
+	since *time.Time,
+) ([]GroupLocation, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -193,8 +197,9 @@ func (s *Service) LatestForGroup(ctx context.Context, groupID string) ([]GroupLo
 		JOIN gps_logs gl ON gl.user_id = u.id
 		WHERE gm.group_id = $1
 		  AND u.status = 'active'
+		  AND ($2::timestamptz IS NULL OR gl.recorded_at >= $2)
 		ORDER BY u.id, gl.recorded_at DESC
-	`, groupID)
+	`, groupID, since)
 	if err != nil {
 		return nil, err
 	}

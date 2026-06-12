@@ -130,6 +130,25 @@ func (h *Hub) BroadcastToGroup(groupID string, event OutboundEvent) {
 	}
 }
 
+func (h *Hub) SendToUser(userID string, event OutboundEvent) int {
+	h.mu.RLock()
+	recipients := make([]*Connection, 0)
+	for _, connection := range h.connections {
+		if connection.UserID == userID {
+			recipients = append(recipients, connection)
+		}
+	}
+	h.mu.RUnlock()
+
+	sent := 0
+	for _, connection := range recipients {
+		if connection.Send(event) {
+			sent++
+		}
+	}
+	return sent
+}
+
 func (h *Hub) BroadcastBinaryToGroup(groupID string, senderConnectionID string, data []byte) {
 	h.mu.RLock()
 	recipients := make([]*Connection, 0)

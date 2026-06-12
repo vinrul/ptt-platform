@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAuthStore } from "../features/auth/authStore";
-import { fetchGpsHistory, fetchUsers } from "./api";
+import {
+  fetchGpsHistory,
+  fetchGpsHistoryForDate,
+  fetchGroupLocations,
+  fetchUsers,
+} from "./api";
 
 const user = {
   id: "dispatcher-1",
@@ -88,6 +93,32 @@ describe("API access token refresh", () => {
     const requestUrl = new URL(String(fetchMock.mock.calls[0][0]), window.location.origin);
     expect(requestUrl.pathname).toBe("/api/users/field-1/gps-history");
     expect(requestUrl.searchParams.get("limit")).toBe("500");
+    expect(requestUrl.searchParams.has("from")).toBe(true);
+    expect(requestUrl.searchParams.has("to")).toBe(true);
+  });
+
+  it("requests group locations with a bounded hours window", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse(200, { items: [] }),
+    );
+
+    await fetchGroupLocations("expired-access", "group-1", 24);
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]), window.location.origin);
+    expect(requestUrl.pathname).toBe("/api/groups/group-1/locations");
+    expect(requestUrl.searchParams.get("hours")).toBe("24");
+  });
+
+  it("requests GPS history for a selected date", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      jsonResponse(200, { user, items: [] }),
+    );
+
+    await fetchGpsHistoryForDate("expired-access", "field-1", "2026-06-12");
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]), window.location.origin);
+    expect(requestUrl.pathname).toBe("/api/users/field-1/gps-history");
+    expect(requestUrl.searchParams.get("limit")).toBe("1000");
     expect(requestUrl.searchParams.has("from")).toBe(true);
     expect(requestUrl.searchParams.has("to")).toBe(true);
   });

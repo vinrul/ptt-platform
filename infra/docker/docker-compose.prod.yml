@@ -45,6 +45,8 @@ services:
       TRUSTED_PROXIES: ${TRUSTED_PROXIES}
       LOGIN_RATE_LIMIT: ${LOGIN_RATE_LIMIT:-10}
       LOGIN_RATE_WINDOW_SECONDS: ${LOGIN_RATE_WINDOW_SECONDS:-60}
+      REVERSE_GEOCODE_URL: ${REVERSE_GEOCODE_URL:-https://nominatim.openstreetmap.org/reverse}
+      ROUTE_SERVICE_URL: ${ROUTE_SERVICE_URL:-https://route.vinrul.my.id}
     depends_on:
       postgres:
         condition: service_healthy

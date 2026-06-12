@@ -23,3 +23,15 @@ func TestQueryLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryHours(t *testing.T) {
+	if since, err := queryHours(""); err != nil || since != nil {
+		t.Fatalf("expected empty hours to keep default query, got since=%v err=%v", since, err)
+	}
+	if _, err := queryHours("0"); err == nil {
+		t.Fatal("expected zero hours to be invalid")
+	}
+	if since, err := queryHours("24"); err != nil || since == nil {
+		t.Fatalf("expected valid 24 hour window, got since=%v err=%v", since, err)
+	}
+}

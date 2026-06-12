@@ -1,39 +1,44 @@
-import { useEffect, useRef } from "react";
-import { LineString, Map as MaptalksMap, Marker, TileLayer, VectorLayer } from "maptalks";
-import type { GpsHistoryPoint } from "../../lib/api";
+import { useEffect, useRef, useState } from "react";
+import { Map as MaptalksMap, Marker, TileLayer, VectorLayer } from "maptalks";
+import { fetchReverseGeocode } from "../../lib/api";
+import { useAuthStore } from "../auth/authStore";
 import { useRealtimeStore } from "../users/realtimeStore";
 
 interface DispatcherMapProps {
   onAcknowledgeSos: (id: string) => void;
   onCloseUser: () => void;
-  onLoadHistory: (userId: string) => void;
+  onRequestPosition: (userId: string) => void;
+  onRefreshLocations: () => void;
   onSelectUser: (userId: string) => void;
+  positionRequestMessage: string;
+  positionRequestPending: boolean;
+  refreshing: boolean;
   selectedUserId: string;
-  history: GpsHistoryPoint[];
-  historyError: string;
-  historyLoading: boolean;
-  historyEnabled: boolean;
 }
 
 export function DispatcherMap({
   onAcknowledgeSos,
   onCloseUser,
-  onLoadHistory,
+  onRequestPosition,
+  onRefreshLocations,
   onSelectUser,
+  positionRequestMessage,
+  positionRequestPending,
+  refreshing,
   selectedUserId,
-  history,
-  historyError,
-  historyLoading,
-  historyEnabled,
 }: DispatcherMapProps) {
+  const session = useAuthStore((state) => state.session)!;
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MaptalksMap | null>(null);
   const markerLayerRef = useRef<VectorLayer | null>(null);
-  const historyLayerRef = useRef<VectorLayer | null>(null);
   const markersRef = useRef(new globalThis.Map<string, Marker>());
   const sosMarkersRef = useRef(new globalThis.Map<string, Marker>());
+  const geocodeCacheRef = useRef(new globalThis.Map<string, string>());
   const hasCenteredRef = useRef(false);
   const lastFocusedSosRef = useRef<string | null>(null);
+  const [address, setAddress] = useState("");
+  const [addressLoading, setAddressLoading] = useState(false);
+  const [addressError, setAddressError] = useState("");
   const locations = useRealtimeStore((state) => state.locations);
   const users = useRealtimeStore((state) => state.users);
   const presence = useRealtimeStore((state) => state.presence);
@@ -59,14 +64,12 @@ export function DispatcherMap({
       }),
     });
     markerLayerRef.current = new VectorLayer("fleet-markers").addTo(map);
-    historyLayerRef.current = new VectorLayer("gps-history").addTo(map);
     mapRef.current = map;
 
     return () => {
       markers.clear();
       sosMarkers.clear();
       markerLayerRef.current = null;
-      historyLayerRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -123,33 +126,6 @@ export function DispatcherMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    const layer = historyLayerRef.current;
-    if (!map || !layer) return;
-    layer.clear();
-    if (history.length === 0) return;
-
-    const chronological = [...history].sort((left, right) =>
-      left.recordedAt.localeCompare(right.recordedAt),
-    );
-    const coordinates = chronological.map(
-      (point) => [point.lng, point.lat] as [number, number],
-    );
-    if (coordinates.length > 1) {
-      new LineString(coordinates, {
-        symbol: {
-          lineColor: "#fbbf24",
-          lineWidth: 4,
-          lineOpacity: 0.85,
-        },
-      }).addTo(layer);
-    }
-
-    const latest = coordinates.at(-1);
-    if (latest) map.animateTo({ center: latest, zoom: 16 });
-  }, [history]);
-
-  useEffect(() => {
-    const map = mapRef.current;
     const layer = markerLayerRef.current;
     if (!map || !layer) return;
 
@@ -195,14 +171,65 @@ export function DispatcherMap({
   const selectedUser = users.find((user) => user.id === selectedUserId);
   const selectedLocation = selectedUserId ? locations[selectedUserId] : undefined;
 
+  useEffect(() => {
+    let active = true;
+    void Promise.resolve().then(async () => {
+      if (!active) return;
+      setAddress("");
+      setAddressError("");
+      setAddressLoading(false);
+      if (!selectedLocation) return;
+
+      const key = `${selectedLocation.lat.toFixed(5)},${selectedLocation.lng.toFixed(5)}`;
+      const cached = geocodeCacheRef.current.get(key);
+      if (cached) {
+        setAddress(cached);
+        return;
+      }
+
+      setAddressLoading(true);
+      try {
+        const result = await fetchReverseGeocode(
+          session.accessToken,
+          selectedLocation.lat,
+          selectedLocation.lng,
+        );
+        geocodeCacheRef.current.set(key, result.displayName);
+        if (active) setAddress(result.displayName);
+      } catch (error: unknown) {
+        if (active) {
+          setAddressError(error instanceof Error ? error.message : "Gagal memuat alamat.");
+        }
+      } finally {
+        if (active) setAddressLoading(false);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedLocation, session.accessToken]);
+
   return (
     <div className="relative h-full min-h-[420px] overflow-hidden bg-[#17211d]">
       <div ref={containerRef} className="absolute inset-0" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(7,17,15,.03),rgba(7,17,15,.22))]" />
 
-      <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full border border-white/12 bg-[#0a1311]/85 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-300 shadow-xl backdrop-blur">
-        <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-        Live operation map
+      <div className="absolute left-4 top-4 flex items-center gap-2">
+        <div className="flex items-center gap-2 rounded-full border border-white/12 bg-[#0a1311]/85 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-300 shadow-xl backdrop-blur">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+          Live operation map
+        </div>
+        <button
+          aria-label="Refresh live map locations"
+          className="grid h-9 w-9 place-items-center rounded-full border border-white/12 bg-[#0a1311]/85 text-sm font-black text-stone-300 shadow-xl backdrop-blur transition hover:bg-white/8 disabled:opacity-50"
+          disabled={refreshing}
+          onClick={onRefreshLocations}
+          title="Refresh live map locations"
+          type="button"
+        >
+          {refreshing ? "..." : "R"}
+        </button>
       </div>
 
       <div className="absolute left-4 top-16 rounded-lg border border-white/10 bg-[#0a1311]/80 px-3 py-2 text-xs text-stone-300 backdrop-blur">
@@ -261,38 +288,26 @@ export function DispatcherMap({
             />
           </div>
 
-          {historyEnabled ? (
-            <button
-              className="mt-4 w-full rounded-xl bg-amber-300 px-4 py-2.5 text-xs font-black uppercase tracking-[0.15em] text-amber-950 disabled:opacity-50"
-              disabled={historyLoading}
-              onClick={() => onLoadHistory(selectedUser.id)}
-              type="button"
-            >
-              {historyLoading ? "Loading history..." : "Load 24 hour history"}
-            </button>
-          ) : null}
-
-          {historyError ? <p className="mt-3 text-xs text-red-300">{historyError}</p> : null}
-          {history.length > 0 ? (
-            <div className="mt-4">
-              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-stone-500">
-                <span>Location history</span>
-                <span>{history.length} points</span>
-              </div>
-              <div className="mt-2 max-h-44 space-y-1 overflow-y-auto">
-                {history.slice(0, 50).map((point) => (
-                  <div
-                    className="flex items-center justify-between rounded-lg bg-white/[0.035] px-3 py-2 text-[11px]"
-                    key={`${point.recordedAt}-${point.lat}-${point.lng}`}
-                  >
-                    <span className="text-stone-300">
-                      {point.lat.toFixed(5)}, {point.lng.toFixed(5)}
-                    </span>
-                    <span className="text-stone-500">{formatDate(point.recordedAt)}</span>
-                  </div>
-                ))}
-              </div>
+          <div className="mt-3 rounded-xl bg-white/[0.035] px-3 py-2 text-xs">
+            <div className="text-[9px] font-bold uppercase tracking-wider text-stone-600">
+              Address
             </div>
+            <div className="mt-1 leading-relaxed text-stone-300">
+              {addressLoading ? "Memuat alamat..." : address || "Alamat belum tersedia."}
+            </div>
+            {addressError ? <div className="mt-2 text-[11px] text-red-300">{addressError}</div> : null}
+          </div>
+
+          <button
+            className="mt-3 w-full rounded-xl bg-emerald-300 px-4 py-2.5 text-xs font-black uppercase tracking-[0.15em] text-emerald-950 disabled:opacity-50"
+            disabled={positionRequestPending || !selectedLocation}
+            onClick={() => onRequestPosition(selectedUser.id)}
+            type="button"
+          >
+            {positionRequestPending ? "Requesting position..." : "Request position"}
+          </button>
+          {positionRequestMessage ? (
+            <p className="mt-2 text-xs text-stone-400">{positionRequestMessage}</p>
           ) : null}
         </div>
       ) : null}

@@ -1,13 +1,12 @@
 import type { GroupSummary, PttStateEvent, ServerRealtimeEvent } from "@ptt-fleet/shared-types";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   changePassword,
   ensureAccessToken,
-  fetchGpsHistory,
   fetchGroup,
+  fetchGroupLocations,
   fetchGroups,
   fetchUsers,
-  type GpsHistoryPoint,
 } from "../lib/api";
 import { decodeAudioDownlink, encodeAudioUplink } from "../lib/audioEnvelope";
 import { BrowserPttAudio } from "../lib/browserPttAudio";
@@ -19,7 +18,13 @@ import { DispatcherMap } from "../features/map/DispatcherMap";
 import { UserList } from "../features/users/UserList";
 import { useRealtimeStore } from "../features/users/realtimeStore";
 
-export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
+export function DispatcherPage({
+  onOpenAdmin,
+  onOpenHistory,
+}: {
+  onOpenAdmin: () => void;
+  onOpenHistory: () => void;
+}) {
   const session = useAuthStore((state) => state.session)!;
   const clearSession = useAuthStore((state) => state.clearSession);
   const users = useRealtimeStore((state) => state.users);
@@ -27,6 +32,7 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const connectionStatus = useRealtimeStore((state) => state.connectionStatus);
   const sosAlerts = useRealtimeStore((state) => state.sosAlerts);
   const setUsers = useRealtimeStore((state) => state.setUsers);
+  const setLocations = useRealtimeStore((state) => state.setLocations);
   const applyEvent = useRealtimeStore((state) => state.applyEvent);
   const setConnectionStatus = useRealtimeStore((state) => state.setConnectionStatus);
   const resetRealtime = useRealtimeStore((state) => state.reset);
@@ -43,13 +49,15 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [loadError, setLoadError] = useState("");
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [mapUserId, setMapUserId] = useState("");
-  const [gpsHistory, setGpsHistory] = useState<GpsHistoryPoint[]>([]);
-  const [gpsHistoryLoading, setGpsHistoryLoading] = useState(false);
-  const [gpsHistoryError, setGpsHistoryError] = useState("");
+  const [positionRequestPending, setPositionRequestPending] = useState(false);
+  const [positionRequestMessage, setPositionRequestMessage] = useState("");
+  const [mapRefreshing, setMapRefreshing] = useState(false);
   const realtimeRef = useRef<RealtimeClient | null>(null);
   const activeSessionRef = useRef("");
   const audioSequenceRef = useRef(0n);
   const pttHeldRef = useRef(false);
+  const positionRequestUserIdRef = useRef("");
+  const positionRequestTimeoutRef = useRef<number | null>(null);
   const audioRef = useRef<BrowserPttAudio | null>(null);
   audioRef.current ??= new BrowserPttAudio(setLoadError);
 
@@ -75,6 +83,24 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
         setPttStatus("Standby");
         pttHeldRef.current = false;
         return;
+      }
+      if (event.type === "gps.request.accepted") {
+        setPositionRequestMessage(`Position request sent via ${event.payload.delivery}. Waiting for device...`);
+        return;
+      }
+      if (event.type === "gps.request.failed") {
+        clearPositionRequestTimeout();
+        setPositionRequestPending(false);
+        setPositionRequestMessage(event.payload.message);
+        return;
+      }
+      if (
+        event.type === "gps.updated" &&
+        event.payload.userId === positionRequestUserIdRef.current
+      ) {
+        clearPositionRequestTimeout();
+        setPositionRequestPending(false);
+        setPositionRequestMessage("Fresh position received.");
       }
       if (!event.type.startsWith("ptt.")) return;
       const pttEvent = event as PttStateEvent;
@@ -148,6 +174,7 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
     return () => {
       active = false;
+      clearPositionRequestTimeout();
       realtime.disconnect();
       realtimeRef.current = null;
       void audioRef.current?.release();
@@ -172,25 +199,6 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       payload: { groupId: selectedGroup },
     });
   }, [connectionStatus, selectedGroup]);
-
-  useEffect(() => {
-    setTargetUserId("");
-    setGroupMemberIds(new Set());
-    if (!selectedGroup) return;
-    let active = true;
-    void fetchGroup(session.accessToken, selectedGroup)
-      .then((group) => {
-        if (active) setGroupMemberIds(new Set(group.members.map((member) => member.userId)));
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setLoadError(error instanceof Error ? error.message : "Unable to load group members");
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [selectedGroup, session.accessToken]);
 
   const onlineCount = useMemo(
     () => users.filter((user) => presence[user.id]?.status === "online").length,
@@ -223,6 +231,70 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     realtimeRef.current?.disconnect();
     resetRealtime();
     clearSession();
+  }
+
+  function handleGroupChange(groupId: string) {
+    setSelectedGroup(groupId);
+    setTargetUserId("");
+    setGroupMemberIds(new Set());
+    setLocations({});
+  }
+
+  const fetchGroupSnapshot = useCallback(async () => {
+    if (!selectedGroup) {
+      throw new Error("No group selected");
+    }
+    const [group, locationResult] = await Promise.all([
+      fetchGroup(session.accessToken, selectedGroup),
+      fetchGroupLocations(session.accessToken, selectedGroup, 24),
+    ]);
+    const locations = Object.fromEntries(
+      locationResult.items.map((location) => [
+        location.userId,
+        {
+          lat: location.lat,
+          lng: location.lng,
+          speed: location.speed,
+          heading: location.heading,
+          accuracy: location.accuracy,
+          recordedAt: location.recordedAt,
+        },
+      ]),
+    );
+    return { group, locations };
+  }, [selectedGroup, session.accessToken]);
+
+  useEffect(() => {
+    if (!selectedGroup) return;
+    let active = true;
+    void fetchGroupSnapshot()
+      .then(({ group, locations }) => {
+        if (!active) return;
+        setGroupMemberIds(new Set(group.members.map((member) => member.userId)));
+        setLocations(locations);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : "Unable to load group members");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [fetchGroupSnapshot, selectedGroup, setLocations]);
+
+  async function refreshMapLocations() {
+    if (!selectedGroup) return;
+    setMapRefreshing(true);
+    setLoadError("");
+    try {
+      const { locations } = await fetchGroupSnapshot();
+      setLocations(locations);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Unable to refresh map locations");
+    } finally {
+      setMapRefreshing(false);
+    }
   }
 
   async function toggleMonitor() {
@@ -274,6 +346,37 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     });
   }
 
+  function clearPositionRequestTimeout() {
+    if (positionRequestTimeoutRef.current !== null) {
+      window.clearTimeout(positionRequestTimeoutRef.current);
+      positionRequestTimeoutRef.current = null;
+    }
+    positionRequestUserIdRef.current = "";
+  }
+
+  function requestPosition(userId: string) {
+    if (!selectedGroup || connectionStatus !== "connected") return;
+    clearPositionRequestTimeout();
+    positionRequestUserIdRef.current = userId;
+    setPositionRequestPending(true);
+    setPositionRequestMessage("");
+    positionRequestTimeoutRef.current = window.setTimeout(() => {
+      setPositionRequestPending(false);
+      setPositionRequestMessage("Device has not returned a fresh position yet.");
+      positionRequestTimeoutRef.current = null;
+      positionRequestUserIdRef.current = "";
+    }, 45_000);
+    realtimeRef.current?.send({
+      type: "gps.request",
+      requestId: createRequestId(),
+      timestamp: new Date().toISOString(),
+      payload: {
+        groupId: selectedGroup,
+        targetUserId: userId,
+      },
+    });
+  }
+
   function acknowledgeSos(id: string) {
     realtimeRef.current?.send({
       type: "sos.ack",
@@ -281,23 +384,6 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       timestamp: new Date().toISOString(),
       payload: { id },
     });
-  }
-
-  async function showGpsHistory(userId: string) {
-    setMapUserId(userId);
-    setGpsHistory([]);
-    setGpsHistoryError("");
-    setGpsHistoryLoading(true);
-    try {
-      const result = await fetchGpsHistory(session.accessToken, userId);
-      setGpsHistory(result.items);
-    } catch (error) {
-      setGpsHistoryError(
-        error instanceof Error ? error.message : "Unable to load GPS history",
-      );
-    } finally {
-      setGpsHistoryLoading(false);
-    }
   }
 
   return (
@@ -323,7 +409,7 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
             <select
               aria-label="Active group"
               className="min-w-0 flex-1 rounded-xl border border-stone-700 bg-stone-900 px-3 py-2 text-sm text-stone-200 outline-none focus:border-emerald-400 sm:w-56"
-              onChange={(event) => setSelectedGroup(event.target.value)}
+              onChange={(event) => handleGroupChange(event.target.value)}
               value={selectedGroup}
             >
               {groups.length === 0 ? <option value="">No groups</option> : null}
@@ -337,6 +423,13 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
           <div className="flex items-center gap-3">
             <ConnectionBadge status={connectionStatus} />
+            <button
+              className="rounded-xl border border-white/10 px-3 py-2 text-xs font-bold uppercase tracking-wider text-stone-300 transition hover:bg-white/5"
+              onClick={onOpenHistory}
+              type="button"
+            >
+              History
+            </button>
             {session.user.role !== "field_user" ? (
               <button
                 className="rounded-xl border border-white/10 px-3 py-2 text-xs font-bold uppercase tracking-wider text-stone-300 transition hover:bg-white/5"
@@ -395,11 +488,6 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                 }
                 presence={presence}
                 selectedUserId={targetUserId}
-                onViewHistory={
-                  session.user.role === "super_admin" || session.user.role === "dispatcher"
-                    ? (userId) => void showGpsHistory(userId)
-                    : undefined
-                }
                 users={users.filter(
                   (user) => user.role === "field_user" && groupMemberIds.has(user.id),
                 )}
@@ -409,24 +497,24 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
           <section className="min-h-[460px]">
             <DispatcherMap
-              history={gpsHistory}
-              historyEnabled={
-                session.user.role === "super_admin" || session.user.role === "dispatcher"
-              }
-              historyError={gpsHistoryError}
-              historyLoading={gpsHistoryLoading}
               onAcknowledgeSos={acknowledgeSos}
               onCloseUser={() => {
                 setMapUserId("");
-                setGpsHistory([]);
-                setGpsHistoryError("");
+                clearPositionRequestTimeout();
+                setPositionRequestPending(false);
+                setPositionRequestMessage("");
               }}
-              onLoadHistory={(userId) => void showGpsHistory(userId)}
+              onRequestPosition={requestPosition}
+              onRefreshLocations={() => void refreshMapLocations()}
               onSelectUser={(userId) => {
                 setMapUserId(userId);
-                setGpsHistory([]);
-                setGpsHistoryError("");
+                clearPositionRequestTimeout();
+                setPositionRequestPending(false);
+                setPositionRequestMessage("");
               }}
+              positionRequestMessage={positionRequestMessage}
+              positionRequestPending={positionRequestPending}
+              refreshing={mapRefreshing}
               selectedUserId={mapUserId}
             />
           </section>
@@ -515,6 +603,16 @@ export function DispatcherPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
             >
               Hold PTT
             </button>
+            {targetUserId ? (
+              <button
+                className="rounded-xl border border-emerald-300/30 bg-emerald-300/10 px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-emerald-200 disabled:opacity-40"
+                disabled={positionRequestPending || connectionStatus !== "connected"}
+                onClick={() => requestPosition(targetUserId)}
+                type="button"
+              >
+                {positionRequestPending ? "Requesting position" : "Request position"}
+              </button>
+            ) : null}
             <button
               className="rounded-xl border border-white/10 px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-stone-400"
               onClick={() => setTargetUserId("")}

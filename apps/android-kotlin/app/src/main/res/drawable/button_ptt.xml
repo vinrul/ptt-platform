@@ -1,7 +1,7 @@
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_enabled="false">
         <shape>
-            <solid android:color="#6687E7BC" />
+            <solid android:color="@color/fleet_control_disabled" />
             <corners android:radius="14dp" />
         </shape>
     </item>

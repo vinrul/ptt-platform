@@ -24,6 +24,8 @@ type Config struct {
 	LoginRateLimit          int
 	LoginRateWindow         time.Duration
 	FirebaseCredentialsPath string
+	ReverseGeocodeURL       string
+	RouteServiceURL         string
 }
 
 func Load() (Config, error) {
@@ -42,6 +44,8 @@ func Load() (Config, error) {
 		LoginRateLimit:          getEnvInt("LOGIN_RATE_LIMIT", 10),
 		LoginRateWindow:         time.Duration(getEnvInt("LOGIN_RATE_WINDOW_SECONDS", 60)) * time.Second,
 		FirebaseCredentialsPath: getEnv("FIREBASE_CREDENTIALS_PATH", ""),
+		ReverseGeocodeURL:       getEnv("REVERSE_GEOCODE_URL", "https://nominatim.openstreetmap.org/reverse"),
+		RouteServiceURL:         getEnv("ROUTE_SERVICE_URL", "https://route.vinrul.my.id"),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -82,6 +86,12 @@ func (c Config) Validate() error {
 	if c.AppEnv == "production" && len(c.TrustedProxies) == 0 {
 		return errors.New("TRUSTED_PROXIES is required in production")
 	}
+	if err := validateHTTPURL("REVERSE_GEOCODE_URL", c.ReverseGeocodeURL); err != nil {
+		return err
+	}
+	if err := validateHTTPURL("ROUTE_SERVICE_URL", c.RouteServiceURL); err != nil {
+		return err
+	}
 	for _, origin := range c.AllowedOrigins {
 		parsed, err := url.Parse(origin)
 		if err != nil ||
@@ -103,6 +113,14 @@ func (c Config) Validate() error {
 				return fmt.Errorf("TRUSTED_PROXIES contains invalid IP or CIDR %q", proxy)
 			}
 		}
+	}
+	return nil
+}
+
+func validateHTTPURL(name string, value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return fmt.Errorf("%s must be an http(s) URL", name)
 	}
 	return nil
 }

@@ -46,6 +46,7 @@ interface RealtimeState {
   sosAlerts: Record<string, SosAlert>;
   focusedSosId: string | null;
   setConnectionStatus: (status: RealtimeStatus) => void;
+  setLocations: (locations: Record<string, UserLocation>) => void;
   setUsers: (users: UserSummary[]) => void;
   applyEvent: (event: ServerRealtimeEvent) => void;
   reset: () => void;
@@ -60,6 +61,7 @@ export const useRealtimeStore = create<RealtimeState>((set) => ({
   sosAlerts: {},
   focusedSosId: null,
   setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
+  setLocations: (locations) => set({ locations }),
   setUsers: (users) => set({ users }),
   applyEvent: (event) => {
     if (event.type === "connection.ready") {

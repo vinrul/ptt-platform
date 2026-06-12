@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { UserList } from "./UserList";
 
 describe("UserList", () => {
@@ -32,11 +32,9 @@ describe("UserList", () => {
     expect(names).toEqual(["Bravo Field", "Alpha Field"]);
   });
 
-  it("opens GPS history for the selected user", () => {
-    const onViewHistory = vi.fn();
+  it("does not render per-user GPS history actions", () => {
     render(
       <UserList
-        onViewHistory={onViewHistory}
         presence={{}}
         users={[
           {
@@ -50,7 +48,6 @@ describe("UserList", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "View location history for Alpha Field" }));
-    expect(onViewHistory).toHaveBeenCalledWith("user-1");
+    expect(screen.queryByRole("button", { name: /history/i })).not.toBeInTheDocument();
   });
 });

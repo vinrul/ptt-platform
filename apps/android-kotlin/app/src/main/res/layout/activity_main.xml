@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/fleet_background"
     android:orientation="vertical">
 
     <FrameLayout
@@ -171,6 +173,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
+                    android:buttonTint="@color/control_button_tint"
                     android:text="@string/show_password"
                     android:textColor="@color/fleet_text" />
 
@@ -250,7 +253,9 @@
                             android:text="@string/gps_tracking"
                             android:textColor="@color/fleet_text"
                             android:textSize="12sp"
-                            android:textStyle="bold" />
+                            android:textStyle="bold"
+                            app:thumbTint="@color/switch_thumb_tint"
+                            app:trackTint="@color/switch_track_tint" />
                     </LinearLayout>
 
                     <TextView
@@ -404,7 +409,9 @@
                         android:text="@string/wakeup_overlay_switch"
                         android:textColor="@color/fleet_text"
                         android:textSize="14sp"
-                        android:textStyle="bold" />
+                        android:textStyle="bold"
+                        app:thumbTint="@color/switch_thumb_tint"
+                        app:trackTint="@color/switch_track_tint" />
 
                     <TextView
                         android:id="@+id/wakeupOverlayDescription"
@@ -672,6 +679,14 @@
                     android:layout_marginTop="8dp"
                     android:textColor="@color/fleet_muted"
                     android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/mapUserAddressText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textColor="@color/fleet_text"
+                    android:textSize="13sp" />
 
                 <Button
                     android:id="@+id/mapTalkButton"

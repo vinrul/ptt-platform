@@ -24,6 +24,7 @@ type fakeAccessRepository struct {
 	identities map[string]Identity
 	joinErr    error
 	joinErrors map[string]error
+	pushTokens []PushTarget
 }
 
 type fakeGPSRecorder struct {
@@ -86,6 +87,20 @@ func (r fakeAccessRepository) ActiveIdentity(_ context.Context, userID string) (
 		return Identity{}, ErrUserNotFound
 	}
 	return r.identity, nil
+}
+
+func (r fakeAccessRepository) GetOfflineGroupMembersPushTokens(_ context.Context, _ string, _ string) ([]PushTarget, error) {
+	return r.pushTokens, nil
+}
+
+func (r fakeAccessRepository) GetUserPushTokens(_ context.Context, userID string) ([]PushTarget, error) {
+	targets := make([]PushTarget, 0)
+	for _, target := range r.pushTokens {
+		if target.UserID == userID {
+			targets = append(targets, target)
+		}
+	}
+	return targets, nil
 }
 
 func TestHandlerRelaysPTTAudioWithinJoinedGroup(t *testing.T) {
@@ -358,10 +373,6 @@ func (r fakeAccessRepository) CanJoinGroup(_ context.Context, userID string, _ s
 		return err
 	}
 	return r.joinErr
-}
-
-func (r fakeAccessRepository) GetOfflineGroupMembersPushTokens(_ context.Context, _ string, _ string) ([]PushTarget, error) {
-	return nil, nil
 }
 
 func TestHandlerRejectsInvalidToken(t *testing.T) {

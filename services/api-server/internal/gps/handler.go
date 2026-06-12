@@ -44,7 +44,13 @@ func (h *Handler) LatestForGroup(c *gin.Context) {
 		}
 	}
 
-	items, err := h.service.LatestForGroup(c.Request.Context(), groupID)
+	since, err := queryHours(c.Query("hours"))
+	if err != nil {
+		apiutil.Error(c, http.StatusBadRequest, "validation_error", "hours must be a positive number", nil)
+		return
+	}
+
+	items, err := h.service.LatestForGroup(c.Request.Context(), groupID, since)
 	if err != nil {
 		apiutil.Error(c, http.StatusInternalServerError, "server_error", "Unable to load group locations", nil)
 		return
@@ -108,4 +114,22 @@ func queryLimit(value string) int {
 		return 1000
 	}
 	return limit
+}
+
+func queryHours(value string) (*time.Time, error) {
+	if value == "" {
+		return nil, nil
+	}
+	hours, err := strconv.Atoi(value)
+	if err != nil || hours < 1 {
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("hours must be positive")
+	}
+	if hours > 168 {
+		hours = 168
+	}
+	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+	return &since, nil
 }

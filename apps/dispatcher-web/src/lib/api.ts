@@ -86,6 +86,24 @@ export interface GpsHistoryResponse {
   items: GpsHistoryPoint[];
 }
 
+export interface GroupLocation extends GpsHistoryPoint {
+  username: string;
+  fullName: string;
+  role: string;
+}
+
+export interface GroupLocationsResponse {
+  items: GroupLocation[];
+}
+
+export interface ReverseGeocodeResponse {
+  displayName: string;
+}
+
+export interface RouteLineResponse {
+  coordinates: Array<[number, number]>;
+}
+
 const configuredBaseUrl = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "";
 let refreshPromise: Promise<AuthSession> | null = null;
 
@@ -218,6 +236,15 @@ export async function fetchAuditLogs(accessToken: string): Promise<AuditListResp
   return request<AuditListResponse>("/api/audit-logs?pageSize=100", {}, accessToken);
 }
 
+export async function fetchGroupLocations(
+  accessToken: string,
+  groupId: string,
+  hours?: number,
+): Promise<GroupLocationsResponse> {
+  const query = hours ? `?${new URLSearchParams({ hours: String(hours) }).toString()}` : "";
+  return request<GroupLocationsResponse>(`/api/groups/${groupId}/locations${query}`, {}, accessToken);
+}
+
 export async function fetchGpsHistory(
   accessToken: string,
   userId: string,
@@ -235,6 +262,68 @@ export async function fetchGpsHistory(
     {},
     accessToken,
   );
+}
+
+export async function fetchGpsHistoryForDate(
+  accessToken: string,
+  userId: string,
+  date: string,
+): Promise<GpsHistoryResponse> {
+  const from = new Date(`${date}T00:00:00`);
+  const to = new Date(from);
+  to.setDate(to.getDate() + 1);
+  const query = new URLSearchParams({
+    from: from.toISOString(),
+    to: to.toISOString(),
+    limit: "1000",
+  });
+  return request<GpsHistoryResponse>(
+    `/api/users/${userId}/gps-history?${query.toString()}`,
+    {},
+    accessToken,
+  );
+}
+
+export async function fetchReverseGeocode(
+  accessToken: string,
+  lat: number,
+  lng: number,
+): Promise<ReverseGeocodeResponse> {
+  const query = new URLSearchParams({ lat: String(lat), lng: String(lng) });
+  return request<ReverseGeocodeResponse>(`/api/geocode/reverse?${query.toString()}`, {}, accessToken);
+}
+
+export async function fetchRouteLine(
+  accessToken: string,
+  points: GpsHistoryPoint[],
+): Promise<RouteLineResponse> {
+  return request<RouteLineResponse>(
+    "/api/routes/line",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        points: sampledRoutePoints(points).map((point) => ({
+          lat: point.lat,
+          lng: point.lng,
+        })),
+      }),
+    },
+    accessToken,
+  );
+}
+
+function sampledRoutePoints(points: GpsHistoryPoint[]): GpsHistoryPoint[] {
+  const chronological = [...points].sort((left, right) =>
+    left.recordedAt.localeCompare(right.recordedAt),
+  );
+  const deduped = chronological.filter((point, index, source) => {
+    const previous = source[index - 1];
+    return !previous || previous.lat !== point.lat || previous.lng !== point.lng;
+  });
+  if (deduped.length <= 80) return deduped;
+
+  const interval = (deduped.length - 1) / 79;
+  return Array.from({ length: 80 }, (_, index) => deduped[Math.round(index * interval)]);
 }
 
 export async function ensureAccessToken(forceRefresh = false): Promise<string> {

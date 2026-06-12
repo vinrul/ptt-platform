@@ -138,6 +138,8 @@ Handler realtime saat ini menerima:
 - `heartbeat`
 - `group.join`
 - `gps.update`
+- `gps.request` untuk role operator
+- `gps.request.failed`
 - `sos.create`
 - `sos.ack` untuk role operator
 - `ptt.start`
@@ -187,6 +189,40 @@ Server menyimpan setiap update ke `gps_logs`, lalu mengirim `gps.updated` ke
 koneksi operator dan anggota yang sedang join ke grup pengirim. Event untuk
 anggota grup menyertakan `groupId`, sehingga client dapat memperbarui marker
 grup yang tepat tanpa memuat ulang snapshot lokasi.
+
+Operator dapat meminta satu lokasi terbaru dari device tertentu:
+
+```json
+{
+  "type": "gps.request",
+  "requestId": "req-1",
+  "timestamp": "2026-06-12T12:00:00Z",
+  "payload": {
+    "groupId": "uuid",
+    "targetUserId": "uuid"
+  }
+}
+```
+
+Server membalas ke operator dengan `gps.request.accepted` jika request berhasil
+dikirim ke device lewat WebSocket atau FCM. Device target menerima
+`gps.requested`, lalu mengirim `gps.update` dengan `requestId` yang sama jika
+lokasi berhasil didapat. Jika device gagal mendapatkan lokasi, device mengirim:
+
+```json
+{
+  "type": "gps.request.failed",
+  "requestId": "req-1",
+  "timestamp": "2026-06-12T12:00:05Z",
+  "payload": {
+    "groupId": "uuid",
+    "message": "Location permission is required"
+  }
+}
+```
+
+Server meneruskan kegagalan ke operator sebagai `gps.request.failed` dengan
+`targetUserId` dan `message`.
 
 Validation:
 

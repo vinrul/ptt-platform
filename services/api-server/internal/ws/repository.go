@@ -31,6 +31,7 @@ type AccessRepository interface {
 	ActiveIdentity(ctx context.Context, userID string) (Identity, error)
 	CanJoinGroup(ctx context.Context, userID string, groupID string) error
 	GetOfflineGroupMembersPushTokens(ctx context.Context, groupID string, excludeUserID string) ([]PushTarget, error)
+	GetUserPushTokens(ctx context.Context, userID string) ([]PushTarget, error)
 }
 
 type Repository struct {
@@ -104,6 +105,33 @@ func (r *Repository) GetOfflineGroupMembersPushTokens(ctx context.Context, group
 		  AND d.status = 'active'
 		  AND d.push_token IS NOT NULL
 	`, groupID, excludeUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var targets []PushTarget
+	for rows.Next() {
+		var target PushTarget
+		if err := rows.Scan(&target.UserID, &target.PushToken); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}
+
+func (r *Repository) GetUserPushTokens(ctx context.Context, userID string) ([]PushTarget, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	rows, err := r.store.Postgres.Query(ctx, `
+		SELECT user_id, push_token
+		FROM devices
+		WHERE user_id = $1
+		  AND status = 'active'
+		  AND push_token IS NOT NULL
+	`, userID)
 	if err != nil {
 		return nil, err
 	}

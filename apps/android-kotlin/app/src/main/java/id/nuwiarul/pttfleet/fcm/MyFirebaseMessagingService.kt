@@ -61,6 +61,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                     applicationContext.startActivity(startAppIntent)
                 }
             }
+        } else if (type == "gps_location_request") {
+            val groupId = remoteMessage.data["groupId"]
+            val requestId = remoteMessage.data["requestId"]
+            Log.d(TAG, "GPS location request received for group: $groupId")
+            PatrolService.requestPosition(applicationContext, groupId, requestId)
         }
     }
 
