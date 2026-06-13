@@ -65,6 +65,7 @@
     <string name="hold_to_target">Hold to talk to %1$s</string>
     <string name="login_fields_required">Username and password are required.</string>
     <string name="login_failed">Login failed.</string>
+    <string name="session_expired">Session expired. Please login again.</string>
     <string name="start_tracking">Start GPS tracking</string>
     <string name="stop_tracking">Stop GPS tracking</string>
     <string name="gps_tracking">GPS</string>

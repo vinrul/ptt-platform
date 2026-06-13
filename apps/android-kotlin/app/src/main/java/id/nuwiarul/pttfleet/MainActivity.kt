@@ -290,13 +290,7 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
         configurePttButton(binding.pttButton) { null }
         configurePttButton(binding.targetPttButton) { targetUserId }
 
-        sessionManager.currentSession()?.let { showSession(it) } ?: run {
-            if (firstRunWizardStore.isComplete()) {
-                showLogin()
-            } else {
-                showFirstRunWizardStep(FirstRunWizardStep.BASIC_PERMISSIONS)
-            }
-        }
+        restoreSessionOrShowLogin()
     }
 
     private fun applySystemBarInsets() {
@@ -410,6 +404,44 @@ class MainActivity : AppCompatActivity(), RealtimeListener {
                 showSession(session)
             }.onFailure { error ->
                 showLoginError(error.message ?: getString(R.string.login_failed))
+            }
+            setLoginLoading(false)
+        }
+    }
+
+    private fun restoreSessionOrShowLogin() {
+        val cachedSession = sessionManager.currentSession()
+        if (cachedSession == null) {
+            if (firstRunWizardStore.isComplete()) {
+                showLogin()
+            } else {
+                showFirstRunWizardStep(FirstRunWizardStep.BASIC_PERMISSIONS)
+            }
+            return
+        }
+
+        showLogin()
+        setLoginLoading(true)
+        lifecycleScope.launch {
+            runCatching {
+                sessionManager.validSession()
+            }.onSuccess { session ->
+                if (session != null) {
+                    showSession(session)
+                } else {
+                    showLogin()
+                    showLoginError(getString(R.string.session_expired))
+                }
+            }.onFailure { error ->
+                val latestSession = sessionManager.currentSession()
+                if (latestSession == null) {
+                    showLogin()
+                    showLoginError(getString(R.string.session_expired))
+                } else {
+                    showSession(latestSession)
+                    binding.connectionDetailText.text =
+                        error.message ?: getString(R.string.connection_reconnecting)
+                }
             }
             setLoginLoading(false)
         }
