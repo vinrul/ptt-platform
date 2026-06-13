@@ -24,7 +24,6 @@ import id.nuwiarul.pttfleet.fcm.WakeupOverlayPreferenceStore
 import id.nuwiarul.pttfleet.location.GpsSample
 import id.nuwiarul.pttfleet.location.LocationTracker
 import id.nuwiarul.pttfleet.location.TrackingPreferenceStore
-import android.net.wifi.WifiManager
 import id.nuwiarul.pttfleet.websocket.ConnectionStatus
 import id.nuwiarul.pttfleet.websocket.RealtimeClient
 import id.nuwiarul.pttfleet.websocket.RealtimeListener
@@ -42,12 +41,12 @@ class PatrolService : Service(), RealtimeListener {
     private var selectedGroupId: String? = null
     private var ownUserId: String? = null
     private val localSpeakerSessions = mutableSetOf<String>()
-    private var wakeLock: PowerManager.WakeLock? = null
-    private var wifiLock: WifiManager.WifiLock? = null
+    private var transientWakeLock: PowerManager.WakeLock? = null
     private var locationTracker: LocationTracker? = null
     private var pendingWakeLocation = false
     private var pendingPositionRequestId: String? = null
     private var pendingPositionRequestGroupId: String? = null
+    private var oneShotLocationActive = false
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var sessionManager: SessionManager
     private var connectionJob: Job? = null
@@ -73,17 +72,6 @@ class PatrolService : Service(), RealtimeListener {
             },
             onError = { message -> updateNotification(message) }
         )
-        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:patrol")
-            .apply {
-                setReferenceCounted(false)
-                acquire()
-            }
-        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "PttFleet:wifi_lock").apply {
-            setReferenceCounted(false)
-            acquire()
-        }
         realtimeClient.addListener(this)
     }
 
@@ -103,7 +91,15 @@ class PatrolService : Service(), RealtimeListener {
             locationTracker?.stop()
         }
         if (intent?.action == ACTION_WAKEUP) {
-            pendingWakeLocation = true
+            acquireTransientWakeLock("fcm-wakeup", WAKEUP_WAKE_LOCK_DURATION_MS)
+            val wakeRequestId = intent.getStringExtra(EXTRA_REQUEST_ID)
+            if (wakeRequestId.isNullOrBlank()) {
+                pendingWakeLocation = true
+            } else {
+                oneShotLocationActive = true
+                pendingPositionRequestId = wakeRequestId
+                pendingPositionRequestGroupId = intent.getStringExtra(EXTRA_GROUP_ID)
+            }
             intent.getStringExtra(EXTRA_GROUP_ID)?.takeIf { it.isNotBlank() }?.let { groupId ->
                 selectedGroupId = groupId
                 getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
@@ -111,11 +107,13 @@ class PatrolService : Service(), RealtimeListener {
                     .putString(KEY_GROUP_ID, groupId)
                     .apply()
             }
-            if (shouldOpenAppOnWakeup()) {
+            if (!intent.getBooleanExtra(EXTRA_SUPPRESS_OVERLAY, false) && shouldOpenAppOnWakeup()) {
                 wakeScreenBriefly()
             }
         }
         if (intent?.action == ACTION_POSITION_REQUEST) {
+            acquireTransientWakeLock("position-request", LOCATION_WAKE_LOCK_DURATION_MS)
+            oneShotLocationActive = true
             pendingPositionRequestId = intent.getStringExtra(EXTRA_REQUEST_ID)
             pendingPositionRequestGroupId = intent.getStringExtra(EXTRA_GROUP_ID)
             intent.getStringExtra(EXTRA_GROUP_ID)?.takeIf { it.isNotBlank() }?.let { groupId ->
@@ -127,6 +125,10 @@ class PatrolService : Service(), RealtimeListener {
             }
         }
         val shouldSendPttLocation = intent?.action == ACTION_PTT_LOCATION_SNAPSHOT
+        if (shouldSendPttLocation) {
+            oneShotLocationActive = true
+            acquireTransientWakeLock("ptt-location", LOCATION_WAKE_LOCK_DURATION_MS)
+        }
         if (intent?.action == ACTION_JOIN_GROUP) {
             selectedGroupId = intent.getStringExtra(EXTRA_GROUP_ID)
             selectedGroupId?.let { groupId ->
@@ -177,11 +179,12 @@ class PatrolService : Service(), RealtimeListener {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING
         }
-        if (
-            (isTrackingActive || pendingWakeLocation) &&
-            hasLocationPermission() &&
-            (!pendingWakeLocation || hasBackgroundLocationPermission())
-        ) {
+        val needsLocationService = isTrackingActive ||
+            pendingWakeLocation ||
+            pendingPositionRequestId != null ||
+            oneShotLocationActive
+        val needsBackgroundLocation = pendingWakeLocation || pendingPositionRequestId != null
+        if (needsLocationService && hasLocationPermission() && (!needsBackgroundLocation || hasBackgroundLocationPermission())) {
             serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
         }
         startForeground(NOTIFICATION_ID, notification, serviceType)
@@ -209,10 +212,7 @@ class PatrolService : Service(), RealtimeListener {
         audioEngine.release()
         locationTracker?.stop()
         locationTracker = null
-        if (wakeLock?.isHeld == true) wakeLock?.release()
-        wakeLock = null
-        if (wifiLock?.isHeld == true) wifiLock?.release()
-        wifiLock = null
+        releaseTransientWakeLock()
         isTrackingActive = false
         latestLocation = null
         super.onDestroy()
@@ -249,9 +249,15 @@ class PatrolService : Service(), RealtimeListener {
         updateNotification(
             when (status) {
                 ConnectionStatus.IDLE -> getString(R.string.background_offline)
-                ConnectionStatus.CONNECTING -> getString(R.string.background_connecting)
+                ConnectionStatus.CONNECTING -> {
+                    acquireTransientWakeLock("realtime-connect", RECONNECT_WAKE_LOCK_DURATION_MS)
+                    getString(R.string.background_connecting)
+                }
                 ConnectionStatus.CONNECTED -> getString(R.string.background_connected)
-                ConnectionStatus.RECONNECTING -> getString(R.string.background_reconnecting)
+                ConnectionStatus.RECONNECTING -> {
+                    acquireTransientWakeLock("realtime-reconnect", RECONNECT_WAKE_LOCK_DURATION_MS)
+                    getString(R.string.background_reconnecting)
+                }
             },
         )
     }
@@ -290,6 +296,7 @@ class PatrolService : Service(), RealtimeListener {
             return
         }
         audioEngine.stopPlayback()
+        acquireTransientWakeLock("ptt-audio", AUDIO_WAKE_LOCK_DURATION_MS)
         updateNotification(getString(R.string.background_receiving))
         AudioRouting.setSpeakerphoneOn(applicationContext, true)
     }
@@ -342,6 +349,7 @@ class PatrolService : Service(), RealtimeListener {
             return
         }
         pendingWakeLocation = false
+        acquireTransientWakeLock("wake-location", LOCATION_WAKE_LOCK_DURATION_MS)
         locationTracker?.requestCurrentLocation(
             onResult = { sample ->
                 latestLocation = sample
@@ -381,14 +389,19 @@ class PatrolService : Service(), RealtimeListener {
             return
         }
 
+        oneShotLocationActive = true
+        startPatrolForeground(getString(R.string.background_connecting))
+        acquireTransientWakeLock("requested-location", LOCATION_WAKE_LOCK_DURATION_MS)
         locationTracker?.requestCurrentLocation(
             onResult = { sample ->
+                oneShotLocationActive = false
                 latestLocation = sample
                 realtimeClient.sendGps(sample, requestId)
                 onLocationChangedListener?.invoke(sample)
                 updateNotification(getString(R.string.background_location_sent))
             },
             onUnavailable = { message ->
+                oneShotLocationActive = false
                 realtimeClient.sendGpsRequestFailed(requestId, groupId, message)
                 updateNotification(message)
             },
@@ -399,13 +412,18 @@ class PatrolService : Service(), RealtimeListener {
         if (TrackingPreferenceStore(applicationContext).isEnabled()) return
         if (!hasLocationPermission()) return
 
+        oneShotLocationActive = true
+        startPatrolForeground(getString(R.string.background_connecting))
+        acquireTransientWakeLock("ptt-location", LOCATION_WAKE_LOCK_DURATION_MS)
         locationTracker?.requestCurrentLocation(
             onResult = { sample ->
+                oneShotLocationActive = false
                 latestLocation = sample
                 realtimeClient.sendGps(sample)
                 onLocationChangedListener?.invoke(sample)
             },
             onUnavailable = {
+                oneShotLocationActive = false
                 Log.d("PatrolService", "Optional PTT location is unavailable: $it")
             },
         )
@@ -423,6 +441,26 @@ class PatrolService : Service(), RealtimeListener {
             setReferenceCounted(false)
             acquire(SCREEN_WAKE_DURATION_MS)
         }
+    }
+
+    private fun acquireTransientWakeLock(reason: String, durationMillis: Long) {
+        val existing = transientWakeLock
+        if (existing?.isHeld == true) {
+            return
+        }
+        transientWakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:$reason")
+            .apply {
+                setReferenceCounted(false)
+                acquire(durationMillis)
+            }
+    }
+
+    private fun releaseTransientWakeLock() {
+        if (transientWakeLock?.isHeld == true) {
+            transientWakeLock?.release()
+        }
+        transientWakeLock = null
     }
 
     private fun createNotificationChannel() {
@@ -500,10 +538,15 @@ class PatrolService : Service(), RealtimeListener {
             "id.nuwiarul.pttfleet.action.POSITION_REQUEST"
         private const val EXTRA_GROUP_ID = "group_id"
         private const val EXTRA_REQUEST_ID = "request_id"
+        private const val EXTRA_SUPPRESS_OVERLAY = "suppress_overlay"
         private const val PREFERENCES_NAME = "patrol_service"
         private const val KEY_GROUP_ID = "selected_group_id"
         private const val KEY_ENABLED = "enabled"
         private const val SCREEN_WAKE_DURATION_MS = 8_000L
+        private const val WAKEUP_WAKE_LOCK_DURATION_MS = 60_000L
+        private const val RECONNECT_WAKE_LOCK_DURATION_MS = 60_000L
+        private const val LOCATION_WAKE_LOCK_DURATION_MS = 60_000L
+        private const val AUDIO_WAKE_LOCK_DURATION_MS = 60_000L
 
         var isTrackingActive = false
             internal set
@@ -563,10 +606,11 @@ class PatrolService : Service(), RealtimeListener {
         fun requestPosition(context: Context, groupId: String?, requestId: String?) {
             context.startForegroundService(
                 Intent(context, PatrolService::class.java)
-                    .setAction(ACTION_POSITION_REQUEST)
+                    .setAction(ACTION_WAKEUP)
                     .apply {
                         if (!groupId.isNullOrBlank()) putExtra(EXTRA_GROUP_ID, groupId)
                         if (!requestId.isNullOrBlank()) putExtra(EXTRA_REQUEST_ID, requestId)
+                        putExtra(EXTRA_SUPPRESS_OVERLAY, true)
                     },
             )
         }

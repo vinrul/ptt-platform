@@ -56,9 +56,13 @@ minimal 1 m/s mengembalikan mode bergerak pada sampel berikutnya. Hysteresis ini
 mencegah noise GPS membuat mode sering berpindah saat perangkat diam.
 
 Untuk jaringan seluler buruk, WebSocket melakukan reconnect exponential mulai
-2 detik hingga maksimum 30 detik. Status baru dianggap connected setelah server
-mengirim `connection.ready`. REST memakai connect timeout 10 detik, write timeout
-15 detik, read timeout 20 detik, dan call timeout total 30 detik. OkHttp hanya
+2 detik. Lima percobaan awal tetap cepat hingga maksimum 30 detik, lalu koneksi
+yang gagal lama diperlambat ke 60 detik, 120 detik, dan maksimum 5 menit agar
+mode idle tidak terus membangunkan radio jaringan. FCM tetap menjadi jalur
+wake-up utama saat server perlu membangunkan perangkat untuk PTT atau permintaan
+lokasi. Status baru dianggap connected setelah server mengirim
+`connection.ready`. REST memakai connect timeout 10 detik, write timeout 15
+detik, read timeout 20 detik, dan call timeout total 30 detik. OkHttp hanya
 melakukan retry koneksi transparan; operasi perubahan data seperti ganti password
 tidak diulang manual agar tidak terkirim dua kali.
 
@@ -95,6 +99,17 @@ Wake-up broadcast membuka tab `Home`. Wake-up direct PTT membuka tab
 `speakerUserId`, dengan username sebagai fallback. Navigasi wake-up disimpan
 sementara selama maksimal lima menit agar tetap diterapkan ketika Activity baru
 berhasil dibuka setelah service hidup.
+Untuk mengurangi baterai, service tidak lagi menahan partial wake lock atau
+high-performance Wi-Fi lock permanen. Partial wake lock hanya diambil singkat
+saat FCM wake-up, reconnect, permintaan lokasi, atau audio PTT masuk. Durasi
+wake lock singkat ini memberi waktu hingga 60 detik agar token refresh,
+WebSocket ready, join grup, dan snapshot GPS bisa selesai tanpa kembali ke lock
+permanen. WebSocket tetap hidup selama foreground patrol aktif; jika koneksi
+mati lama, reconnect diperlambat dan FCM dipakai sebagai pemicu wake-up
+berikutnya.
+FCM `gps_location_request` memakai jalur wake service yang sama dengan
+`ptt_wakeup`, tetapi membawa `requestId` agar dispatcher bisa menunggu jawaban
+posisi dan menonaktifkan overlay sehingga aplikasi tidak dibuka di atas layar.
 Sebelum reconnect, service memakai access token yang masih valid atau menukar
 refresh token terlebih dahulu. Jika handshake WebSocket ditolak dengan
 `401/403`, service melakukan satu refresh terkoordinasi lalu reconnect dengan
